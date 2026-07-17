@@ -1,0 +1,20 @@
+manifestVersion: 1
+id: qbitleap-solo-miner
+category: bitcoin
+name: Qbit Solo Miner
+version: "0.1.0"
+tagline: Solo mine Qbit using Qbit Core and Permissionless CKPool
+description: >-
+  Run a Qbit node and Permissionless CKPool on Umbrel for solo mining.
+  Configure an external Qbit payout address, monitor node synchronization,
+  and connect compatible SHA256d mining hardware or rented hashpower.
+developer: QBitLeap
+website: https://github.com/QBitLeap/qbitleap-umbrel
+dependencies: []
+repo: https://github.com/QBitLeap/qbitleap-umbrel
+support: https://github.com/QBitLeap/qbitleap-umbrel/issues
+port: 8080
+gallery: []
+path: ""
+defaultPassword: ""
+releaseNotes: Initial development release.
