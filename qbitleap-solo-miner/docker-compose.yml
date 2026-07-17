@@ -4,27 +4,8 @@ services:
   app_proxy:
     environment:
       APP_HOST: qbitleap-solo-miner_dashboard_1
-      APP_PORT: 80
+      APP_PORT: 8000
 
   dashboard:
-    image: nginx:1.27.5-alpine
+    image: ghcr.io/qbitleap/qbitleap-backend:0.1.1
     restart: on-failure
-    command:
-      - /bin/sh
-      - -c
-      - |
-        cat > /usr/share/nginx/html/index.html <<'EOF'
-        <!doctype html>
-        <html lang="en">
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Qbit Solo Miner</title>
-        </head>
-        <body style="font-family:system-ui;background:#111;color:#fff;padding:40px">
-          <h1>Qbit Solo Miner</h1>
-          <p>QBitLeap installation scaffold is running.</p>
-        </body>
-        </html>
-        EOF
-        exec nginx -g 'daemon off;'
