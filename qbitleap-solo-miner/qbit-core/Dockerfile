@@ -42,8 +42,8 @@ RUN cmake -S . -B build \
 
 RUN cmake --build build --target bitcoind bitcoin-cli -j"$(nproc)"
 
-RUN install -m 0755 build/bin/bitcoind /usr/local/bin/qbitd \
-    && install -m 0755 build/bin/bitcoin-cli /usr/local/bin/qbit-cli
+RUN install -m 0755 build/bin/qbitd /usr/local/bin/qbitd \
+    && install -m 0755 build/bin/qbit-cli /usr/local/bin/qbit-cli
 
 FROM ubuntu:${UBUNTU_VERSION}
 
