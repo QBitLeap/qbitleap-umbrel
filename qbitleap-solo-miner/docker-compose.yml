@@ -9,3 +9,11 @@ services:
   dashboard:
     image: ghcr.io/qbitleap/qbitleap-backend:0.1.1
     restart: on-failure
+    depends_on:
+      - qbitd
+
+  qbitd:
+    image: alpine:3.22
+    container_name: qbitleap-qbitd
+    command: ["sleep", "infinity"]
+    restart: on-failure
