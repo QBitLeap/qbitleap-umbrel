@@ -10,4 +10,4 @@ services:
     image: nginx:1.27.5-alpine
     restart: on-failure
     volumes:
-      - ${APP_DATA_DIR}/data/dashboard:/usr/share/nginx/html:ro
+      - ./dashboard:/usr/share/nginx/html:ro
