@@ -1,15 +1,15 @@
 import os
+
 import requests
+
+from config import get_rpc_credentials
 
 RPC_HOST = os.getenv("QBIT_RPC_HOST", "qbitd")
 RPC_PORT = os.getenv("QBIT_RPC_PORT", "8352")
-RPC_USER = os.getenv("QBIT_RPC_USER", "")
-RPC_PASSWORD = os.getenv("QBIT_RPC_PASSWORD", "")
 
 
-def rpc(method, params=None):
-    if params is None:
-        params = []
+def rpc(method: str, params: list | None = None):
+    user, password = get_rpc_credentials()
 
     response = requests.post(
         f"http://{RPC_HOST}:{RPC_PORT}",
@@ -17,12 +17,17 @@ def rpc(method, params=None):
             "jsonrpc": "1.0",
             "id": "qbitleap",
             "method": method,
-            "params": params,
+            "params": params or [],
         },
-        auth=(RPC_USER, RPC_PASSWORD),
+        auth=(user, password),
         timeout=5,
     )
 
     response.raise_for_status()
 
-    return response.json()["result"]
+    payload = response.json()
+
+    if payload.get("error"):
+        raise RuntimeError(payload["error"])
+
+    return payload["result"]
