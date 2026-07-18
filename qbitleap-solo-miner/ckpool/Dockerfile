@@ -24,7 +24,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 
-RUN git clone --depth 1 https://github.com/Qbit-Org/qbit-mining-bootstrap.git bootstrap
+RUN git clone --depth 1 \
+    https://github.com/Qbit-Org/qbit-mining-bootstrap.git \
+    bootstrap
 
 WORKDIR /src/ckpool
 
@@ -55,14 +57,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /src/ckpool/src/ckpool /usr/local/bin/ckpool
-COPY --from=build /src/bootstrap/docker/ckpool/ckpool-version-mask.py /usr/local/bin/ckpool-version-mask
-COPY --from=build /src/bootstrap/docker/ckpool/qbit-ckpool-preflight.py /usr/local/bin/qbit-ckpool-preflight
-COPY --from=build /src/bootstrap/docker/ckpool/start-ckpool.sh /usr/local/bin/start-ckpool.sh
+COPY --from=build \
+    /src/ckpool/src/ckpool \
+    /usr/local/bin/ckpool
+
+COPY --from=build \
+    /src/bootstrap/docker/ckpool/ckpool-version-mask.py \
+    /usr/local/bin/ckpool-version-mask
+
+COPY --from=build \
+    /src/bootstrap/docker/ckpool/qbit-ckpool-preflight.py \
+    /usr/local/bin/qbit-ckpool-preflight
+
+COPY --from=build \
+    /src/bootstrap/docker/ckpool/start-ckpool.sh \
+    /usr/local/bin/start-ckpool-upstream.sh
+
+COPY start-ckpool.sh /usr/local/bin/start-ckpool.sh
 
 RUN chmod +x \
     /usr/local/bin/ckpool-version-mask \
     /usr/local/bin/qbit-ckpool-preflight \
+    /usr/local/bin/start-ckpool-upstream.sh \
     /usr/local/bin/start-ckpool.sh
 
 EXPOSE 3333
