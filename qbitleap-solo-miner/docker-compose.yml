@@ -25,7 +25,7 @@ services:
       QBIT_RPC_HOST: qbitd
       QBIT_RPC_PORT: 8352
     volumes:
-      - ${APP_DATA_DIR}/data/config:/config:ro
+      - ${APP_DATA_DIR}/data/config:/config
 
   qbitd:
     image: ghcr.io/qbitleap/qbitleap-qbit-core:0.1.0
