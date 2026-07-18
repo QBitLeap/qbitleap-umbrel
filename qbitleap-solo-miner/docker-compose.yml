@@ -6,27 +6,36 @@ services:
       APP_HOST: qbitleap-solo-miner_dashboard_1
       APP_PORT: 8000
 
+  config-init:
+    image: ghcr.io/qbitleap/qbitleap-backend:0.1.2
+    command: ["/usr/local/bin/init-qbit-config.sh"]
+    restart: "no"
+    volumes:
+      - ${APP_DATA_DIR}/data/config:/config
+
   dashboard:
-    image: ghcr.io/qbitleap/qbitleap-backend:0.1.1
+    image: ghcr.io/qbitleap/qbitleap-backend:0.1.2
     restart: on-failure
     depends_on:
-      - qbitd
+      config-init:
+        condition: service_completed_successfully
+      qbitd:
+        condition: service_started
     environment:
       QBIT_RPC_HOST: qbitd
       QBIT_RPC_PORT: 8352
-      QBIT_RPC_USER: qbitleap
-      QBIT_RPC_PASSWORD: qbitleap-change-me
+    volumes:
+      - ${APP_DATA_DIR}/data/config:/config:ro
 
   qbitd:
     image: ghcr.io/qbitleap/qbitleap-qbit-core:0.1.0
     restart: on-failure
+    depends_on:
+      config-init:
+        condition: service_completed_successfully
     volumes:
       - ${APP_DATA_DIR}/data/qbit:/data
+      - ${APP_DATA_DIR}/data/config:/config:ro
     command:
       - -datadir=/data
-      - -server=1
-      - -rpcbind=0.0.0.0
-      - -rpcallowip=0.0.0.0/0
-      - -rpcuser=qbitleap
-      - -rpcpassword=qbitleap-change-me
-      - -printtoconsole
+      - -conf=/config/qbit.conf
