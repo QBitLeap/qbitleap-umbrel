@@ -39,3 +39,16 @@ services:
     command:
       - -datadir=/data
       - -conf=/config/qbit.conf
+
+  ckpool:
+    image: ghcr.io/qbitleap/qbitleap-ckpool:0.1.0
+    restart: on-failure
+    depends_on:
+      config-init:
+        condition: service_completed_successfully
+      qbitd:
+        condition: service_started
+    volumes:
+      - ${APP_DATA_DIR}/data/config:/config:ro
+    command:
+      - /config/ckpool.conf
