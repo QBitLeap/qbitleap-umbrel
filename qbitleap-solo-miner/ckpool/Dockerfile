@@ -6,7 +6,7 @@ FROM ubuntu:${UBUNTU_VERSION} AS build
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG CKPOOL_GIT_URL=https://bitbucket.org/ckolivas/ckpool.git
-ARG CKPOOL_GIT_REF=master
+ARG ARG CKPOOL_GIT_REF=88e99e0b6fc7e28796c8450b42fa00070b66c6e3
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf \
