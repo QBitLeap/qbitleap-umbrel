@@ -48,5 +48,7 @@ services:
         condition: service_completed_successfully
       qbitd:
         condition: service_started
+    environment:
+      QBIT_CHAIN: mainnet
     volumes:
       - ${APP_DATA_DIR}/data/config:/config:ro
