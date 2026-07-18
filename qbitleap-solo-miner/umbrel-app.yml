@@ -2,7 +2,7 @@ manifestVersion: 1
 id: qbitleap-solo-miner
 category: bitcoin
 name: Qbit Solo Miner
-version: "0.1.6"
+version: "0.1.7"
 tagline: Solo mine Qbit using Qbit Core and Permissionless CKPool
 description: >-
   Run a Qbit node and Permissionless CKPool on Umbrel for solo mining.
