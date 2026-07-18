@@ -1,4 +1,8 @@
+import json
+import os
+import stat
 from html import escape
+from pathlib import Path
 from urllib.parse import parse_qs, quote
 
 from fastapi import FastAPI, Request
@@ -8,6 +12,19 @@ from config import get_miner_address, save_miner_address
 from qbit import rpc
 
 app = FastAPI(title="QBitLeap")
+
+CKPOOL_SOCKET_PATH = Path(
+    os.getenv(
+        "CKPOOL_SOCKET_PATH",
+        "/ckpool-sock/qbitlab/stratifier",
+    )
+)
+CKPOOL_STATUS_PATH = Path(
+    os.getenv(
+        "CKPOOL_STATUS_PATH",
+        "/ckpool-logs/pool/pool.status",
+    )
+)
 
 
 def get_qbit_status() -> str:
@@ -24,9 +41,50 @@ def get_qbit_status() -> str:
         return f"Not Connected — {type(error).__name__}"
 
 
+def ckpool_socket_is_running() -> bool:
+    try:
+        return stat.S_ISSOCK(CKPOOL_SOCKET_PATH.stat().st_mode)
+    except OSError:
+        return False
+
+
+def read_ckpool_stats() -> tuple[int, str]:
+    try:
+        lines = CKPOOL_STATUS_PATH.read_text(
+            encoding="utf-8"
+        ).splitlines()
+
+        if len(lines) < 2:
+            return 0, "0 H/s"
+
+        pool = json.loads(lines[0])
+        hashrates = json.loads(lines[1])
+
+        workers = int(pool.get("Workers", 0))
+        hashrate = str(hashrates.get("hashrate1m", "0")).strip()
+
+        if not hashrate or hashrate in {"0", "0.0", "0.00"}:
+            hashrate = "0"
+
+        return workers, f"{hashrate} H/s"
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return 0, "0 H/s"
+
+
+def get_ckpool_status() -> tuple[str, int, str]:
+    if not ckpool_socket_is_running():
+        return "Not Running", 0, "0 H/s"
+
+    workers, hashrate = read_ckpool_stats()
+    return "Running", workers, hashrate
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     qbit_status = get_qbit_status()
+    ckpool_status, ckpool_workers, ckpool_hashrate = (
+        get_ckpool_status()
+    )
     miner_address = get_miner_address()
 
     status_message = request.query_params.get("message", "")
@@ -74,6 +132,7 @@ async def home(request: Request):
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta http-equiv="refresh" content="15">
         <title>QBitLeap</title>
     </head>
 
@@ -102,21 +161,25 @@ async def home(request: Request):
             ">
                 <h3 style="margin-top: 0;">System status</h3>
 
-                <p>
-                    Qbit Core:
-                    <strong>{escape(qbit_status)}</strong>
-                </p>
+                <div style="margin-bottom: 24px;">
+                    <strong>Qbit Core</strong>
+                    <div style="margin-top: 8px;">
+                        Status: {escape(qbit_status)}
+                    </div>
+                </div>
 
-                <p>
-                    CKPool:
-                    <strong>
-                        {
-                            "Waiting for restart"
-                            if miner_address
-                            else "Not Running"
-                        }
-                    </strong>
-                </p>
+                <div>
+                    <strong>CKPool</strong>
+                    <div style="margin-top: 8px;">
+                        Status: {escape(ckpool_status)}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Workers: {ckpool_workers}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Hashrate: {escape(ckpool_hashrate)}
+                    </div>
+                </div>
             </section>
 
             <section style="
@@ -203,7 +266,7 @@ async def update_miner_address(request: Request):
         save_miner_address(miner_address)
 
         message = quote(
-            "Payout address saved. CKPool must restart before using it."
+            "Payout address saved. Restart the app to apply it to CKPool."
         )
         return RedirectResponse(
             url=f"/?message={message}",
