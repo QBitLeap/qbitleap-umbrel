@@ -13,17 +13,33 @@ services:
     volumes:
       - ${APP_DATA_DIR}/data/config:/config
 
+  ckpool-config-init:
+    image: ghcr.io/qbitleap/qbitleap-backend:0.1.2
+    command: ["/usr/local/bin/init-ckpool-config.sh"]
+    restart: "no"
+    depends_on:
+      config-init:
+        condition: service_completed_successfully
+    volumes:
+      - ${APP_DATA_DIR}/data/config:/config
+
   dashboard:
     image: ghcr.io/qbitleap/qbitleap-backend:0.1.2
     restart: on-failure
     depends_on:
       config-init:
         condition: service_completed_successfully
+      ckpool-config-init:
+        condition: service_completed_successfully
       qbitd:
+        condition: service_started
+      ckpool:
         condition: service_started
     environment:
       QBIT_RPC_HOST: qbitd
       QBIT_RPC_PORT: 8352
+      CKPOOL_HOST: ckpool
+      CKPOOL_PORT: 3333
     volumes:
       - ${APP_DATA_DIR}/data/config:/config:ro
 
@@ -39,3 +55,21 @@ services:
     command:
       - -datadir=/data
       - -conf=/config/qbit.conf
+
+  ckpool:
+    image: ghcr.io/qbitleap/qbitleap-ckpool:0.1.0
+    restart: on-failure
+    depends_on:
+      ckpool-config-init:
+        condition: service_completed_successfully
+      qbitd:
+        condition: service_started
+    ports:
+      - "3333:3333"
+    volumes:
+      - ${APP_DATA_DIR}/data/config:/config:ro
+      - ${APP_DATA_DIR}/data/ckpool:/data
+    command:
+      - ckpool
+      - -c
+      - /config/ckpool.conf
