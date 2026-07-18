@@ -50,6 +50,7 @@ services:
         condition: service_started
     environment:
       QBIT_CHAIN: mainnet
+      QBIT_EXPECTED_GENESIS_HASH: "0000000000004d60aa5d46013991d0a0e2995d89ee98e53068ae196d763e79f2"
       CKPOOL_MINDIFF: "1024"
       CKPOOL_STARTDIFF: "65536"
     volumes:
