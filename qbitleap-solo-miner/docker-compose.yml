@@ -50,5 +50,3 @@ services:
         condition: service_started
     volumes:
       - ${APP_DATA_DIR}/data/config:/config:ro
-    command:
-      - /config/ckpool.conf
