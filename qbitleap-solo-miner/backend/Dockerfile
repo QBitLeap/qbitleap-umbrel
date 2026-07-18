@@ -2,10 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py qbit.py config.py ./
+COPY backend/main.py backend/qbit.py backend/config.py ./
+COPY scripts/init-qbit-config.sh /usr/local/bin/init-qbit-config.sh
+
+RUN chmod +x /usr/local/bin/init-qbit-config.sh
 
 EXPOSE 8000
 
