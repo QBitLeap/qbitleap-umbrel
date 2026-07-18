@@ -50,5 +50,7 @@ services:
         condition: service_started
     environment:
       QBIT_CHAIN: mainnet
+      CKPOOL_MINDIFF: "1024"
+      CKPOOL_STARTDIFF: "65536"
     volumes:
       - ${APP_DATA_DIR}/data/config:/config:ro
