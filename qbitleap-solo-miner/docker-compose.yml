@@ -11,9 +11,22 @@ services:
     restart: on-failure
     depends_on:
       - qbitd
+    environment:
+      QBIT_RPC_HOST: qbitd
+      QBIT_RPC_PORT: 8352
+      QBIT_RPC_USER: qbitleap
+      QBIT_RPC_PASSWORD: qbitleap-change-me
 
   qbitd:
-    image: alpine:3.22
-    container_name: qbitleap-qbitd
-    command: ["sleep", "infinity"]
+    image: ghcr.io/qbitleap/qbitleap-qbit-core:0.1.0
     restart: on-failure
+    volumes:
+      - ${APP_DATA_DIR}/data/qbit:/data
+    command:
+      - -datadir=/data
+      - -server=1
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=0.0.0.0/0
+      - -rpcuser=qbitleap
+      - -rpcpassword=qbitleap-change-me
+      - -printtoconsole
