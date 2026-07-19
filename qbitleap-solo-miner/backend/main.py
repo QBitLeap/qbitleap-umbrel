@@ -543,14 +543,14 @@ async def home(request: Request):
 
             <details class="card" data-section-key="public-endpoint" open>
                 <summary>Public Mining Endpoint</summary>
-                <p style="color:#bbb;line-height:1.5;">Save the public Internet host and external TCP port that NiceHash will use. This setting displays your connection string; it does not open your router or change CKPool's internal port.</p>
+                <p style="color:#bbb;line-height:1.5;">Save the public Internet host and router-facing TCP port that NiceHash will use. This setting displays your connection string; it does not open your router or change CKPool's fixed listening port.</p>
                 <p>Current endpoint: <strong>{f'<code>{escape(public_endpoint)}</code>' if public_endpoint else 'Not configured'}</strong></p>
                 <form method="post" action="/settings/public-endpoint">
                     <label for="public_host" style="display:block;margin-bottom:8px;">Public host or IP</label>
                     <input id="public_host" name="public_host" type="text" value="{escape(public_host, quote=True)}" placeholder="miner.example.com or public IP" autocomplete="off" spellcheck="false" required style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #555;border-radius:4px;background:#0d0d0d;color:white;font-family:monospace;font-size:15px;">
-                    <label for="public_port" style="display:block;margin:16px 0 8px;">Public Stratum port</label>
+                    <label for="public_port" style="display:block;margin:16px 0 8px;">Public / router port</label>
                     <input id="public_port" name="public_port" type="number" min="1" max="65535" step="1" value="{public_port}" required style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #555;border-radius:4px;background:#0d0d0d;color:white;font-family:monospace;font-size:15px;">
-                    <p style="margin:12px 0 0;color:#999;line-height:1.5;">Your router must forward this public TCP port to this Umbrel's TCP port 3333. The public port may also be 3333.</p>
+                    <p style="margin:12px 0 0;color:#999;line-height:1.5;">QBitLeap listens on TCP 3333 inside every Umbrel installation. Forward the public/router port entered above to this Umbrel's TCP port 3333. The two ports may be the same or different.</p>
                     <button type="submit" style="margin-top:16px;padding:11px 18px;border:0;border-radius:4px;background:#20b957;color:white;font-size:15px;font-weight:bold;cursor:pointer;">Save public endpoint</button>
                 </form>
             </details>
@@ -654,7 +654,7 @@ async def update_public_endpoint(request: Request):
         save_public_mining_endpoint(public_host, public_port)
 
         message = quote(
-            "Public mining endpoint saved. Forward the selected public TCP port to this Umbrel's TCP port 3333 before connecting NiceHash."
+            "Public mining endpoint saved. Forward the selected public/router TCP port to this Umbrel's fixed TCP port 3333 before connecting NiceHash."
         )
         return RedirectResponse(
             url=f"/?message={message}",
