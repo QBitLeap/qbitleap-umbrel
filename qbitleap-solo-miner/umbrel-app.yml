@@ -2,7 +2,7 @@ manifestVersion: 1
 id: qbitleap-solo-miner
 category: bitcoin
 name: QBitLeap
-version: "0.1.20"
+version: "0.1.21"
 tagline: Solo mine Qbit using Qbit Core and Permissionless CKPool
 description: >-
   Run a Qbit node and Permissionless CKPool on Umbrel for solo mining.
@@ -17,4 +17,4 @@ port: 8080
 gallery: []
 path: ""
 defaultPassword: ""
-releaseNotes: Add Mining Progress with current network difficulty, best-share percentage, and blocks-found count
+releaseNotes: Reorder and collapse dashboard sections, simplify zero-percent display, and add the persistent QBitLeap Hall of Blocks
