@@ -42,6 +42,13 @@ def get_qbit_status() -> str:
         return f"Not Connected — {type(error).__name__}"
 
 
+def get_network_difficulty() -> float | None:
+    try:
+        return float(rpc("getdifficulty"))
+    except (TypeError, ValueError, KeyError, RuntimeError):
+        return None
+
+
 def ckpool_socket_is_running() -> bool:
     try:
         return stat.S_ISSOCK(CKPOOL_SOCKET_PATH.stat().st_mode)
@@ -123,6 +130,33 @@ def format_number(value: object) -> str:
     return f"{number:.3f}".rstrip("0").rstrip(".")
 
 
+def format_difficulty(value: float | None) -> str:
+    if value is None:
+        return "Not reported"
+    return f"{value:,.3f}".rstrip("0").rstrip(".")
+
+
+def calculate_best_share_percent(
+    best_share: float | None,
+    network_difficulty: float | None,
+) -> float | None:
+    if best_share is None or network_difficulty is None or network_difficulty <= 0:
+        return None
+    return (best_share / network_difficulty) * 100
+
+
+def format_percent(value: float | None) -> str:
+    if value is None:
+        return "Not reported"
+    if value >= 100:
+        return f"{value:,.3f}% — block-level share"
+    if value >= 1:
+        return f"{value:,.3f}%"
+    if value >= 0.001:
+        return f"{value:,.6f}%"
+    return f"{value:.9f}%"
+
+
 def format_time(value: object) -> str:
     if value in (None, "", 0, "0"):
         return "Not reported"
@@ -155,8 +189,10 @@ def read_ckpool_stats() -> dict[str, object]:
         "accepted": "Not reported",
         "rejected": "Not reported",
         "best_share": "Not reported",
+        "best_share_value": None,
         "last_share": "Not reported",
         "last_block": "Never reported",
+        "blocks_found": "Not reported",
         "updated": "Not reported",
     }
 
@@ -201,6 +237,12 @@ def read_ckpool_stats() -> dict[str, object]:
             "bestshare", "bestever", "bestdifficulty", "bestsharedifficulty",
         )
         stats["best_share"] = format_number(best_share)
+        stats["best_share_value"] = best_share
+
+        stats["blocks_found"] = format_count(find_value(
+            records,
+            "blocks", "blockcount", "blocksfound", "solvedblocks", "acceptedblocks",
+        ))
 
         stats["last_share"] = format_time(find_value(
             records,
@@ -237,6 +279,13 @@ async def home(request: Request):
         ckpool_stats,
     ) = get_ckpool_status()
     miner_address = get_miner_address()
+    network_difficulty = get_network_difficulty()
+    best_share_value = ckpool_stats.get("best_share_value")
+    best_share_percent = calculate_best_share_percent(
+        best_share_value if isinstance(best_share_value, (int, float)) else None,
+        network_difficulty,
+    )
+    progress_width = min(max(best_share_percent or 0, 0), 100)
 
     dashboard_host = request.url.hostname or "umbrel.local"
     stratum_endpoint = f"stratum+tcp://{dashboard_host}:{CKPOOL_STRATUM_PORT}"
@@ -302,12 +351,55 @@ async def home(request: Request):
             padding: 40px 24px;
         ">
             <h1 style="margin-bottom: 8px;">QBitLeap</h1>
-            <h2 style="margin-top: 0; color: #bbb;">Qbit Solo Miner</h2>
+            <h2 style="margin-top: 0; color: #bbb;">Solo Mining Dashboard</h2>
 
             {notice_html}
 
             <section style="
                 margin-top: 32px;
+                padding: 24px;
+                border: 1px solid #333;
+                border-radius: 8px;
+                background: #181818;
+            ">
+                <h3 style="margin-top: 0;">Mining Progress</h3>
+
+                <div style="
+                    width: 100%;
+                    height: 24px;
+                    overflow: hidden;
+                    border: 1px solid #555;
+                    border-radius: 12px;
+                    background: #0d0d0d;
+                ">
+                    <div style="
+                        width: {progress_width:.6f}%;
+                        height: 100%;
+                        background: #20b957;
+                    "></div>
+                </div>
+
+                <div style="margin-top: 10px; font-size: 20px; font-weight: bold;">
+                    {escape(format_percent(best_share_percent))}
+                </div>
+                <div style="margin-top: 6px; color: #aaa;">
+                    Best share compared with current network difficulty. This is a
+                    closest-attempt record, not the probability of the next share.
+                </div>
+
+                <div style="margin-top: 20px;">
+                    Best share: {escape(str(ckpool_stats["best_share"]))}
+                </div>
+                <div style="margin-top: 6px;">
+                    Current network difficulty: {escape(format_difficulty(network_difficulty))}
+                </div>
+                <div style="margin-top: 6px;">
+                    Blocks found: {escape(str(ckpool_stats["blocks_found"]))}
+                </div>
+            </section>
+
+            <section style="
+                margin-top: 24px;
                 padding: 24px;
                 border: 1px solid #333;
                 border-radius: 8px;
@@ -368,6 +460,9 @@ async def home(request: Request):
                     </div>
                     <div style="margin-top: 6px;">
                         Last block found: {escape(str(ckpool_stats["last_block"]))}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Blocks found: {escape(str(ckpool_stats["blocks_found"]))}
                     </div>
                     <div style="margin-top: 6px; color: #999;">
                         CKPool stats updated: {escape(str(ckpool_stats["updated"]))}
