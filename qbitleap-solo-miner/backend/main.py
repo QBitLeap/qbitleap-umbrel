@@ -29,6 +29,7 @@ CKPOOL_STATUS_PATH = Path(
 )
 CKPOOL_STRATUM_HOST = os.getenv("CKPOOL_STRATUM_HOST", "ckpool")
 CKPOOL_STRATUM_PORT = int(os.getenv("CKPOOL_STRATUM_PORT", "3333"))
+HALL_OF_BLOCKS_PATH = Path(os.getenv("HALL_OF_BLOCKS_PATH", "/config/hall-of-blocks.json"))
 
 
 def get_qbit_status() -> str:
@@ -146,8 +147,8 @@ def calculate_best_share_percent(
 
 
 def format_percent(value: float | None) -> str:
-    if value is None:
-        return "Not reported"
+    if value is None or value <= 0:
+        return "0%"
     if value >= 100:
         return f"{value:,.3f}% — block-level share"
     if value >= 1:
@@ -175,6 +176,151 @@ def format_time(value: object) -> str:
         return moment.strftime("%Y-%m-%d %H:%M:%S UTC")
     except (ValueError, TypeError, OSError, OverflowError):
         return str(value).strip() or "Not reported"
+
+
+
+def parse_count(value: object) -> int | None:
+    if value is None:
+        return None
+    text = str(value).replace(",", "").strip()
+    if not text or text.lower() == "not reported":
+        return None
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
+
+
+def load_hall_of_blocks() -> dict[str, object]:
+    default = {"observed_blocks_found": 0, "blocks": []}
+    try:
+        data = json.loads(HALL_OF_BLOCKS_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return default
+        blocks = data.get("blocks", [])
+        if not isinstance(blocks, list):
+            blocks = []
+        observed = parse_count(data.get("observed_blocks_found")) or 0
+        return {"observed_blocks_found": observed, "blocks": blocks}
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return default
+
+
+def save_hall_of_blocks(data: dict[str, object]) -> None:
+    HALL_OF_BLOCKS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = HALL_OF_BLOCKS_PATH.with_suffix(".tmp")
+    temporary_path.write_text(
+        json.dumps(data, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary_path.replace(HALL_OF_BLOCKS_PATH)
+
+
+def get_tip_block_record(
+    miner_address: str,
+    best_share: float | None,
+    network_difficulty: float | None,
+) -> dict[str, object]:
+    now = datetime.now(timezone.utc)
+    record: dict[str, object] = {
+        "height": "Not reported",
+        "found": now.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "finder": miner_address or "Not configured",
+        "reward": "Not reported",
+        "best_share": format_number(best_share),
+        "network_difficulty": format_difficulty(network_difficulty),
+        "difficulty_ratio": format_percent(
+            calculate_best_share_percent(best_share, network_difficulty)
+        ),
+    }
+
+    try:
+        blockchain = rpc("getblockchaininfo")
+        height = int(blockchain["blocks"])
+        block_hash = rpc("getblockhash", [height])
+        block = rpc("getblock", [block_hash, 2])
+        record["height"] = height
+
+        block_time = block.get("time") if isinstance(block, dict) else None
+        if block_time:
+            record["found"] = format_time(block_time)
+
+        transactions = block.get("tx", []) if isinstance(block, dict) else []
+        if transactions and isinstance(transactions[0], dict):
+            reward = sum(
+                float(output.get("value", 0))
+                for output in transactions[0].get("vout", [])
+                if isinstance(output, dict)
+            )
+            record["reward"] = f"{reward:.8f} QBIT"
+    except (TypeError, ValueError, KeyError, RuntimeError):
+        pass
+
+    return record
+
+
+def update_hall_of_blocks(
+    reported_blocks_found: object,
+    miner_address: str,
+    best_share: float | None,
+    network_difficulty: float | None,
+) -> dict[str, object]:
+    hall = load_hall_of_blocks()
+    current_count = parse_count(reported_blocks_found)
+    observed_count = parse_count(hall.get("observed_blocks_found")) or 0
+    blocks = hall.get("blocks", [])
+    if not isinstance(blocks, list):
+        blocks = []
+
+    if current_count is not None and current_count > observed_count:
+        for _ in range(current_count - observed_count):
+            blocks.append(
+                get_tip_block_record(miner_address, best_share, network_difficulty)
+            )
+        hall = {"observed_blocks_found": current_count, "blocks": blocks}
+        try:
+            save_hall_of_blocks(hall)
+        except OSError:
+            pass
+    elif current_count is not None and current_count < observed_count:
+        # Preserve permanent history across CKPool restarts or counter resets.
+        hall["blocks"] = blocks
+
+    return hall
+
+
+def render_hall_of_blocks(hall: dict[str, object]) -> str:
+    blocks = hall.get("blocks", [])
+    if not isinstance(blocks, list):
+        blocks = []
+
+    total = max(parse_count(hall.get("observed_blocks_found")) or 0, len(blocks))
+    if not blocks:
+        return f"""
+            <div style="margin-top: 14px;">Total Blocks Found: {total:,}</div>
+            <p style="margin: 16px 0 0; color: #bbb; line-height: 1.5;">
+                No blocks have been mined yet.<br>
+                Your first solo block will be permanently recorded here.
+            </p>
+        """
+
+    entries = []
+    for index, block in enumerate(reversed(blocks), start=1):
+        display_number = len(blocks) - index + 1
+        entries.append(f"""
+            <article style="margin-top: 18px; padding-top: 18px; border-top: 1px solid #333;">
+                <strong>Block #{display_number}</strong>
+                <div style="margin-top: 10px;">Height: {escape(str(block.get('height', 'Not reported')))}</div>
+                <div style="margin-top: 6px;">Found: {escape(str(block.get('found', 'Not reported')))}</div>
+                <div style="margin-top: 6px;">Finder: <code>{escape(str(block.get('finder', 'Not reported')))}</code></div>
+                <div style="margin-top: 6px;">Reward: {escape(str(block.get('reward', 'Not reported')))}</div>
+                <div style="margin-top: 6px;">Best share: {escape(str(block.get('best_share', 'Not reported')))}</div>
+                <div style="margin-top: 6px;">Network difficulty: {escape(str(block.get('network_difficulty', 'Not reported')))}</div>
+                <div style="margin-top: 6px;">Difficulty ratio: {escape(str(block.get('difficulty_ratio', 'Not reported')))}</div>
+            </article>
+        """)
+
+    return f'<div style="margin-top: 14px;">Total Blocks Found: {total:,}</div>' + "".join(entries)
 
 
 def read_ckpool_stats() -> dict[str, object]:
@@ -273,60 +419,50 @@ def get_ckpool_status() -> tuple[str, str, dict[str, object]]:
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     qbit_status = get_qbit_status()
-    (
-        ckpool_status,
-        stratum_status,
-        ckpool_stats,
-    ) = get_ckpool_status()
+    ckpool_status, stratum_status, ckpool_stats = get_ckpool_status()
     miner_address = get_miner_address()
     network_difficulty = get_network_difficulty()
     best_share_value = ckpool_stats.get("best_share_value")
+    numeric_best_share = (
+        best_share_value if isinstance(best_share_value, (int, float)) else None
+    )
     best_share_percent = calculate_best_share_percent(
-        best_share_value if isinstance(best_share_value, (int, float)) else None,
+        numeric_best_share,
         network_difficulty,
     )
-    progress_width = min(max(best_share_percent or 0, 0), 100)
+    hall = update_hall_of_blocks(
+        ckpool_stats.get("blocks_found"),
+        miner_address,
+        numeric_best_share,
+        network_difficulty,
+    )
+    hall_html = render_hall_of_blocks(hall)
 
     dashboard_host = request.url.hostname or "umbrel.local"
     stratum_endpoint = f"stratum+tcp://{dashboard_host}:{CKPOOL_STRATUM_PORT}"
 
     status_message = request.query_params.get("message", "")
     error_message = request.query_params.get("error", "")
-
     notice_html = ""
 
     if status_message:
         notice_html = f"""
-        <div style="
-            margin: 0 0 24px;
-            padding: 14px 16px;
-            border: 1px solid #2ecc71;
-            background: #102a1a;
-            color: #8ff0ae;
-            border-radius: 6px;
-        ">
+        <div style="margin:0 0 24px;padding:14px 16px;border:1px solid #2ecc71;background:#102a1a;color:#8ff0ae;border-radius:6px;">
             {escape(status_message)}
         </div>
         """
-
     if error_message:
         notice_html = f"""
-        <div style="
-            margin: 0 0 24px;
-            padding: 14px 16px;
-            border: 1px solid #e74c3c;
-            background: #2a1010;
-            color: #ffaaaa;
-            border-radius: 6px;
-        ">
+        <div style="margin:0 0 24px;padding:14px 16px;border:1px solid #e74c3c;background:#2a1010;color:#ffaaaa;border-radius:6px;">
             {escape(error_message)}
         </div>
         """
 
     configured_address_html = (
-        f"<code>{escape(miner_address)}</code>"
-        if miner_address
-        else "Not configured"
+        f"<code>{escape(miner_address)}</code>" if miner_address else "Not configured"
+    )
+    active_workers = max(
+        int(ckpool_stats["workers"]) - int(ckpool_stats["idle"]), 0
     )
 
     return f"""
@@ -337,208 +473,85 @@ async def home(request: Request):
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta http-equiv="refresh" content="15">
         <title>QBitLeap</title>
+        <style>
+            body {{ margin:0; background:#111; color:white; font-family:Arial,sans-serif; }}
+            main {{ max-width:760px; margin:0 auto; padding:40px 24px; }}
+            details.card {{ margin-top:24px; padding:0 24px 24px; border:1px solid #333; border-radius:8px; background:#181818; }}
+            details.card > summary {{ cursor:pointer; font-size:19px; font-weight:bold; padding:24px 0; list-style:none; }}
+            details.card > summary::-webkit-details-marker {{ display:none; }}
+            details.card > summary::before {{ content:'▶'; display:inline-block; width:22px; color:#aaa; font-size:13px; }}
+            details.card[open] > summary::before {{ content:'▼'; }}
+            code {{ overflow-wrap:anywhere; }}
+        </style>
     </head>
-
-    <body style="
-        margin: 0;
-        background: #111;
-        color: white;
-        font-family: Arial, sans-serif;
-    ">
-        <main style="
-            max-width: 760px;
-            margin: 0 auto;
-            padding: 40px 24px;
-        ">
-            <h1 style="margin-bottom: 8px;">QBitLeap</h1>
-            <h2 style="margin-top: 0; color: #bbb;">Solo Mining Dashboard</h2>
-
+    <body>
+        <main>
+            <h1 style="margin-bottom:8px;">QBitLeap</h1>
+            <h2 style="margin-top:0;color:#bbb;">Solo Mining Dashboard</h2>
             {notice_html}
 
-            <section style="
-                margin-top: 32px;
-                padding: 24px;
-                border: 1px solid #333;
-                border-radius: 8px;
-                background: #181818;
-            ">
-                <h3 style="margin-top: 0;">Mining Progress</h3>
-
-                <div style="
-                    width: 100%;
-                    height: 24px;
-                    overflow: hidden;
-                    border: 1px solid #555;
-                    border-radius: 12px;
-                    background: #0d0d0d;
-                ">
-                    <div style="
-                        width: {progress_width:.6f}%;
-                        height: 100%;
-                        background: #20b957;
-                    "></div>
-                </div>
-
-                <div style="margin-top: 10px; font-size: 20px; font-weight: bold;">
-                    {escape(format_percent(best_share_percent))}
-                </div>
-                <div style="margin-top: 6px; color: #aaa;">
-                    Best share compared with current network difficulty. This is a
-                    closest-attempt record, not the probability of the next share.
-                </div>
-
-                <div style="margin-top: 20px;">
-                    Best share: {escape(str(ckpool_stats["best_share"]))}
-                </div>
-                <div style="margin-top: 6px;">
-                    Current network difficulty: {escape(format_difficulty(network_difficulty))}
-                </div>
-                <div style="margin-top: 6px;">
-                    Blocks found: {escape(str(ckpool_stats["blocks_found"]))}
-                </div>
-            </section>
-
-            <section style="
-                margin-top: 24px;
-                padding: 24px;
-                border: 1px solid #333;
-                border-radius: 8px;
-                background: #181818;
-            ">
-                <h3 style="margin-top: 0;">System status</h3>
-
-                <div style="margin-bottom: 24px;">
+            <details class="card" data-section-key="system-status" open>
+                <summary>System Status</summary>
+                <div style="margin-bottom:24px;">
                     <strong>Qbit Core</strong>
-                    <div style="margin-top: 8px;">
-                        Status: {escape(qbit_status)}
-                    </div>
+                    <div style="margin-top:8px;">Status: {escape(qbit_status)}</div>
                 </div>
-
                 <div>
                     <strong>CKPool</strong>
-                    <div style="margin-top: 8px;">
-                        Status: {escape(ckpool_status)}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Stratum: {escape(stratum_status)}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Local endpoint:
-                        <code>{escape(stratum_endpoint)}</code>
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Users: {ckpool_stats["users"]}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Workers: {ckpool_stats["workers"]}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Active / idle / disconnected:
-                        {ckpool_stats["workers"] - ckpool_stats["idle"]} /
-                        {ckpool_stats["idle"]} / {ckpool_stats["disconnected"]}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Hashrate (1m): {escape(str(ckpool_stats["hashrate_1m"]))}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Hashrate (5m): {escape(str(ckpool_stats["hashrate_5m"]))}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Hashrate (1h): {escape(str(ckpool_stats["hashrate_1h"]))}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Accepted shares: {escape(str(ckpool_stats["accepted"]))}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Rejected shares: {escape(str(ckpool_stats["rejected"]))}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Best share: {escape(str(ckpool_stats["best_share"]))}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Last accepted share: {escape(str(ckpool_stats["last_share"]))}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Last block found: {escape(str(ckpool_stats["last_block"]))}
-                    </div>
-                    <div style="margin-top: 6px;">
-                        Blocks found: {escape(str(ckpool_stats["blocks_found"]))}
-                    </div>
-                    <div style="margin-top: 6px; color: #999;">
-                        CKPool stats updated: {escape(str(ckpool_stats["updated"]))}
-                    </div>
+                    <div style="margin-top:8px;">Status: {escape(ckpool_status)}</div>
+                    <div style="margin-top:6px;">Stratum: {escape(stratum_status)}</div>
+                    <div style="margin-top:6px;">Local endpoint: <code>{escape(stratum_endpoint)}</code></div>
+                    <div style="margin-top:6px;">Users: {ckpool_stats['users']}</div>
+                    <div style="margin-top:6px;">Workers: {ckpool_stats['workers']}</div>
+                    <div style="margin-top:6px;">Active / idle / disconnected: {active_workers} / {ckpool_stats['idle']} / {ckpool_stats['disconnected']}</div>
+                    <div style="margin-top:6px;">Hashrate (1m): {escape(str(ckpool_stats['hashrate_1m']))}</div>
+                    <div style="margin-top:6px;">Hashrate (5m): {escape(str(ckpool_stats['hashrate_5m']))}</div>
+                    <div style="margin-top:6px;">Hashrate (1h): {escape(str(ckpool_stats['hashrate_1h']))}</div>
+                    <div style="margin-top:6px;">Accepted shares: {escape(str(ckpool_stats['accepted']))}</div>
+                    <div style="margin-top:6px;">Rejected shares: {escape(str(ckpool_stats['rejected']))}</div>
+                    <div style="margin-top:6px;">Best share: {escape(str(ckpool_stats['best_share']))}</div>
+                    <div style="margin-top:6px;">Last accepted share: {escape(str(ckpool_stats['last_share']))}</div>
+                    <div style="margin-top:6px;">Last block found: {escape(str(ckpool_stats['last_block']))}</div>
+                    <div style="margin-top:6px;">Blocks found: {escape(str(ckpool_stats['blocks_found']))}</div>
+                    <div style="margin-top:6px;color:#999;">CKPool stats updated: {escape(str(ckpool_stats['updated']))}</div>
                 </div>
-            </section>
+            </details>
 
-            <section style="
-                margin-top: 24px;
-                padding: 24px;
-                border: 1px solid #333;
-                border-radius: 8px;
-                background: #181818;
-            ">
-                <h3 style="margin-top: 0;">Mining payout address</h3>
+            <details class="card" data-section-key="mining-progress" open>
+                <summary>Mining Progress</summary>
+                <div style="font-size:20px;font-weight:bold;">{escape(format_percent(best_share_percent))}</div>
+                <div style="margin-top:6px;color:#aaa;line-height:1.4;">Best share compared with current network difficulty. This is a closest-attempt record, not the probability of the next share.</div>
+                <div style="margin-top:20px;">Best share: {escape(str(ckpool_stats['best_share']))}</div>
+                <div style="margin-top:6px;">Current network difficulty: {escape(format_difficulty(network_difficulty))}</div>
+                <div style="margin-top:6px;">Blocks found: {escape(str(ckpool_stats['blocks_found']))}</div>
+            </details>
 
-                <p style="color: #bbb; line-height: 1.5;">
-                    Enter the external Qbit mainnet address that should receive
-                    any solo-mined block rewards. The app does not hold or
-                    manage wallet keys.
-                </p>
+            <details class="card" data-section-key="hall-of-blocks" open>
+                <summary>🏆 QBitLeap Hall of Blocks</summary>
+                {hall_html}
+            </details>
 
-                <p>
-                    Current address:
-                    <strong>{configured_address_html}</strong>
-                </p>
-
+            <details class="card" data-section-key="payout-address" open>
+                <summary>Mining Payout Address</summary>
+                <p style="color:#bbb;line-height:1.5;">Enter the external Qbit mainnet address that should receive any solo-mined block rewards. The app does not hold or manage wallet keys.</p>
+                <p>Current address: <strong>{configured_address_html}</strong></p>
                 <form method="post" action="/settings/miner-address">
-                    <label
-                        for="miner_address"
-                        style="display:block;margin-bottom:8px;"
-                    >
-                        Qbit mainnet address
-                    </label>
-
-                    <input
-                        id="miner_address"
-                        name="miner_address"
-                        type="text"
-                        value="{escape(miner_address, quote=True)}"
-                        placeholder="qb1..."
-                        autocomplete="off"
-                        spellcheck="false"
-                        required
-                        style="
-                            box-sizing: border-box;
-                            width: 100%;
-                            padding: 12px;
-                            border: 1px solid #555;
-                            border-radius: 4px;
-                            background: #0d0d0d;
-                            color: white;
-                            font-family: monospace;
-                            font-size: 15px;
-                        "
-                    >
-
-                    <button
-                        type="submit"
-                        style="
-                            margin-top: 16px;
-                            padding: 11px 18px;
-                            border: 0;
-                            border-radius: 4px;
-                            background: #20b957;
-                            color: white;
-                            font-size: 15px;
-                            font-weight: bold;
-                            cursor: pointer;
-                        "
-                    >
-                        Save payout address
-                    </button>
+                    <label for="miner_address" style="display:block;margin-bottom:8px;">Qbit mainnet address</label>
+                    <input id="miner_address" name="miner_address" type="text" value="{escape(miner_address, quote=True)}" placeholder="qb1..." autocomplete="off" spellcheck="false" required style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #555;border-radius:4px;background:#0d0d0d;color:white;font-family:monospace;font-size:15px;">
+                    <button type="submit" style="margin-top:16px;padding:11px 18px;border:0;border-radius:4px;background:#20b957;color:white;font-size:15px;font-weight:bold;cursor:pointer;">Save payout address</button>
                 </form>
-            </section>
+            </details>
         </main>
+        <script>
+            document.querySelectorAll('details[data-section-key]').forEach((section) => {{
+                const key = 'qbitleap-section-' + section.dataset.sectionKey;
+                const saved = localStorage.getItem(key);
+                if (saved !== null) section.open = saved === 'open';
+                section.addEventListener('toggle', () => {{
+                    localStorage.setItem(key, section.open ? 'open' : 'closed');
+                }});
+            }});
+        </script>
     </body>
     </html>
     """
