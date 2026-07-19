@@ -3,6 +3,7 @@ import os
 import socket
 import stat
 from html import escape
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, quote
 
@@ -59,39 +60,172 @@ def ckpool_stratum_is_listening() -> bool:
         return False
 
 
-def read_ckpool_stats() -> tuple[int, str]:
+def normalize_key(value: object) -> str:
+    return "".join(character for character in str(value).lower() if character.isalnum())
+
+
+def find_value(records: list[dict], *aliases: str):
+    wanted = {normalize_key(alias) for alias in aliases}
+
+    for record in records:
+        for key, value in record.items():
+            if normalize_key(key) in wanted:
+                return value
+
+    return None
+
+
+def find_max_number(records: list[dict], *aliases: str):
+    wanted = {normalize_key(alias) for alias in aliases}
+    values: list[float] = []
+
+    for record in records:
+        for key, value in record.items():
+            if normalize_key(key) not in wanted:
+                continue
+            try:
+                values.append(float(value))
+            except (TypeError, ValueError):
+                continue
+
+    return max(values) if values else None
+
+
+def format_count(value: object) -> str:
+    if value is None:
+        return "Not reported"
+
     try:
-        lines = CKPOOL_STATUS_PATH.read_text(
-            encoding="utf-8"
-        ).splitlines()
+        return f"{int(float(value)):,}"
+    except (TypeError, ValueError):
+        text = str(value).strip()
+        return text or "Not reported"
 
-        if len(lines) < 2:
-            return 0, "0 H/s"
 
-        pool = json.loads(lines[0])
-        hashrates = json.loads(lines[1])
+def format_number(value: object) -> str:
+    if value is None:
+        return "Not reported"
 
-        workers = int(pool.get("Workers", 0))
-        hashrate = str(hashrates.get("hashrate1m", "0")).strip()
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        text = str(value).strip()
+        return text or "Not reported"
 
-        if not hashrate or hashrate in {"0", "0.0", "0.00"}:
-            hashrate = "0"
+    if number == 0:
+        return "0"
+    if number >= 1_000_000_000:
+        return f"{number / 1_000_000_000:.3g} B"
+    if number >= 1_000_000:
+        return f"{number / 1_000_000:.3g} M"
+    if number >= 1_000:
+        return f"{number / 1_000:.3g} K"
+    return f"{number:.3f}".rstrip("0").rstrip(".")
 
-        return workers, f"{hashrate} H/s"
+
+def format_time(value: object) -> str:
+    if value in (None, "", 0, "0"):
+        return "Not reported"
+
+    try:
+        if isinstance(value, (int, float)) or str(value).strip().replace(".", "", 1).isdigit():
+            timestamp = float(value)
+            if timestamp > 10_000_000_000:
+                timestamp /= 1000
+            moment = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        else:
+            moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=timezone.utc)
+            moment = moment.astimezone(timezone.utc)
+        return moment.strftime("%Y-%m-%d %H:%M:%S UTC")
+    except (ValueError, TypeError, OSError, OverflowError):
+        return str(value).strip() or "Not reported"
+
+
+def read_ckpool_stats() -> dict[str, object]:
+    stats: dict[str, object] = {
+        "users": 0,
+        "workers": 0,
+        "idle": 0,
+        "disconnected": 0,
+        "hashrate_1m": "0 H/s",
+        "hashrate_5m": "0 H/s",
+        "hashrate_1h": "0 H/s",
+        "accepted": "Not reported",
+        "rejected": "Not reported",
+        "best_share": "Not reported",
+        "last_share": "Not reported",
+        "last_block": "Never reported",
+        "updated": "Not reported",
+    }
+
+    try:
+        records = []
+        for line in CKPOOL_STATUS_PATH.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            if isinstance(record, dict):
+                records.append(record)
+
+        if not records:
+            return stats
+
+        stats["users"] = int(float(find_value(records, "Users", "usercount") or 0))
+        stats["workers"] = int(float(find_value(records, "Workers", "workercount") or 0))
+        stats["idle"] = int(float(find_value(records, "Idle", "idleworkers") or 0))
+        stats["disconnected"] = int(float(find_value(records, "Disconnected", "disconnectedworkers") or 0))
+
+        for output_key, aliases in {
+            "hashrate_1m": ("hashrate1m", "hashrate_1m"),
+            "hashrate_5m": ("hashrate5m", "hashrate_5m"),
+            "hashrate_1h": ("hashrate1hr", "hashrate1h", "hashrate_1h"),
+        }.items():
+            value = find_value(records, *aliases)
+            text = str(value).strip() if value is not None else "0"
+            stats[output_key] = f"{text or '0'} H/s"
+
+        stats["accepted"] = format_count(find_value(
+            records,
+            "Accepted", "acceptedshares", "sharesaccepted", "validshares", "Shares",
+        ))
+        stats["rejected"] = format_count(find_value(
+            records,
+            "Rejected", "rejectedshares", "sharesrejected", "invalidshares",
+        ))
+
+        best_share = find_max_number(
+            records,
+            "bestshare", "bestever", "bestdifficulty", "bestsharedifficulty",
+        )
+        stats["best_share"] = format_number(best_share)
+
+        stats["last_share"] = format_time(find_value(
+            records,
+            "lastshare", "lastsharetime", "lastacceptedshare", "lastacceptedsharetime",
+        ))
+        stats["last_block"] = format_time(find_value(
+            records,
+            "lastblock", "lastblocktime", "lastblockfound", "lastblockfoundtime",
+        ))
+        stats["updated"] = format_time(find_value(records, "lastupdate", "updated"))
+        return stats
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return 0, "0 H/s"
+        return stats
 
 
-def get_ckpool_status() -> tuple[str, str, int, str]:
+def get_ckpool_status() -> tuple[str, str, dict[str, object]]:
     process_running = ckpool_socket_is_running()
     stratum_listening = ckpool_stratum_is_listening()
 
     if not process_running:
-        return "Not Running", "Not Listening", 0, "0 H/s"
+        return "Not Running", "Not Listening", read_ckpool_stats()
 
-    workers, hashrate = read_ckpool_stats()
+    stats = read_ckpool_stats()
     stratum_status = "Listening" if stratum_listening else "Not Listening"
-    return "Running", stratum_status, workers, hashrate
+    return "Running", stratum_status, stats
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -100,8 +234,7 @@ async def home(request: Request):
     (
         ckpool_status,
         stratum_status,
-        ckpool_workers,
-        ckpool_hashrate,
+        ckpool_stats,
     ) = get_ckpool_status()
     miner_address = get_miner_address()
 
@@ -202,10 +335,42 @@ async def home(request: Request):
                         <code>{escape(stratum_endpoint)}</code>
                     </div>
                     <div style="margin-top: 6px;">
-                        Workers: {ckpool_workers}
+                        Users: {ckpool_stats["users"]}
                     </div>
                     <div style="margin-top: 6px;">
-                        Hashrate: {escape(ckpool_hashrate)}
+                        Workers: {ckpool_stats["workers"]}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Active / idle / disconnected:
+                        {ckpool_stats["workers"] - ckpool_stats["idle"]} /
+                        {ckpool_stats["idle"]} / {ckpool_stats["disconnected"]}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Hashrate (1m): {escape(str(ckpool_stats["hashrate_1m"]))}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Hashrate (5m): {escape(str(ckpool_stats["hashrate_5m"]))}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Hashrate (1h): {escape(str(ckpool_stats["hashrate_1h"]))}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Accepted shares: {escape(str(ckpool_stats["accepted"]))}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Rejected shares: {escape(str(ckpool_stats["rejected"]))}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Best share: {escape(str(ckpool_stats["best_share"]))}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Last accepted share: {escape(str(ckpool_stats["last_share"]))}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Last block found: {escape(str(ckpool_stats["last_block"]))}
+                    </div>
+                    <div style="margin-top: 6px; color: #999;">
+                        CKPool stats updated: {escape(str(ckpool_stats["updated"]))}
                     </div>
                 </div>
             </section>
