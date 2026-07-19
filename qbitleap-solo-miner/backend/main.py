@@ -1,5 +1,6 @@
 import json
 import os
+import socket
 import stat
 from html import escape
 from pathlib import Path
@@ -25,6 +26,8 @@ CKPOOL_STATUS_PATH = Path(
         "/ckpool-logs/pool/pool.status",
     )
 )
+CKPOOL_STRATUM_HOST = os.getenv("CKPOOL_STRATUM_HOST", "ckpool")
+CKPOOL_STRATUM_PORT = int(os.getenv("CKPOOL_STRATUM_PORT", "3333"))
 
 
 def get_qbit_status() -> str:
@@ -33,10 +36,7 @@ def get_qbit_status() -> str:
         blocks = blockchain["blocks"]
         progress = blockchain["verificationprogress"] * 100
 
-        return (
-            f"Connected — block {blocks:,}, "
-            f"sync {progress:.2f}%"
-        )
+        return f"Connected — block {blocks:,}, sync {progress:.2f}%"
     except Exception as error:
         return f"Not Connected — {type(error).__name__}"
 
@@ -44,6 +44,17 @@ def get_qbit_status() -> str:
 def ckpool_socket_is_running() -> bool:
     try:
         return stat.S_ISSOCK(CKPOOL_SOCKET_PATH.stat().st_mode)
+    except OSError:
+        return False
+
+
+def ckpool_stratum_is_listening() -> bool:
+    try:
+        with socket.create_connection(
+            (CKPOOL_STRATUM_HOST, CKPOOL_STRATUM_PORT),
+            timeout=2,
+        ):
+            return True
     except OSError:
         return False
 
@@ -71,21 +82,31 @@ def read_ckpool_stats() -> tuple[int, str]:
         return 0, "0 H/s"
 
 
-def get_ckpool_status() -> tuple[str, int, str]:
-    if not ckpool_socket_is_running():
-        return "Not Running", 0, "0 H/s"
+def get_ckpool_status() -> tuple[str, str, int, str]:
+    process_running = ckpool_socket_is_running()
+    stratum_listening = ckpool_stratum_is_listening()
+
+    if not process_running:
+        return "Not Running", "Not Listening", 0, "0 H/s"
 
     workers, hashrate = read_ckpool_stats()
-    return "Running", workers, hashrate
+    stratum_status = "Listening" if stratum_listening else "Not Listening"
+    return "Running", stratum_status, workers, hashrate
 
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     qbit_status = get_qbit_status()
-    ckpool_status, ckpool_workers, ckpool_hashrate = (
-        get_ckpool_status()
-    )
+    (
+        ckpool_status,
+        stratum_status,
+        ckpool_workers,
+        ckpool_hashrate,
+    ) = get_ckpool_status()
     miner_address = get_miner_address()
+
+    dashboard_host = request.url.hostname or "umbrel.local"
+    stratum_endpoint = f"stratum+tcp://{dashboard_host}:{CKPOOL_STRATUM_PORT}"
 
     status_message = request.query_params.get("message", "")
     error_message = request.query_params.get("error", "")
@@ -172,6 +193,13 @@ async def home(request: Request):
                     <strong>CKPool</strong>
                     <div style="margin-top: 8px;">
                         Status: {escape(ckpool_status)}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Stratum: {escape(stratum_status)}
+                    </div>
+                    <div style="margin-top: 6px;">
+                        Local endpoint:
+                        <code>{escape(stratum_endpoint)}</code>
                     </div>
                     <div style="margin-top: 6px;">
                         Workers: {ckpool_workers}
