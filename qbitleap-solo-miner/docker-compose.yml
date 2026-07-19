@@ -7,14 +7,14 @@ services:
       APP_PORT: 8000
 
   config-init:
-    image: ghcr.io/qbitleap/qbitleap-backend:0.1.7
+    image: ghcr.io/qbitleap/qbitleap-backend:0.1.8
     command: ["/usr/local/bin/init-qbit-config.sh"]
     restart: "no"
     volumes:
       - ${APP_DATA_DIR}/data/config:/config
 
   dashboard:
-    image: ghcr.io/qbitleap/qbitleap-backend:0.1.7
+    image: ghcr.io/qbitleap/qbitleap-backend:0.1.8
     restart: on-failure
     depends_on:
       config-init:
@@ -70,9 +70,10 @@ services:
       test:
         - CMD-SHELL
         - bash -lc 'exec 3<>/dev/tcp/127.0.0.1/3333'
-      interval: 5s
+      interval: 5m
       timeout: 5s
-      retries: 30
+      retries: 3
+      start_period: 60s
     volumes:
       - ${APP_DATA_DIR}/data/config:/config:ro
       - ${APP_DATA_DIR}/data/ckpool/logs:/var/log/ckpool
