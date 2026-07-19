@@ -471,7 +471,6 @@ async def home(request: Request):
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta http-equiv="refresh" content="15">
         <title>QBitLeap</title>
         <style>
             body {{ margin:0; background:#111; color:white; font-family:Arial,sans-serif; }}
@@ -551,6 +550,44 @@ async def home(request: Request):
                     localStorage.setItem(key, section.open ? 'open' : 'closed');
                 }});
             }});
+
+            // Minimize dashboard polling: refresh only while this tab is visible.
+            // A visible dashboard refreshes every five minutes. Returning to a
+            // previously hidden tab triggers one immediate refresh for fresh data.
+            const refreshIntervalMs = 5 * 60 * 1000;
+            let refreshTimer = null;
+            let wasHidden = document.hidden;
+
+            function cancelRefresh() {{
+                if (refreshTimer !== null) {{
+                    clearTimeout(refreshTimer);
+                    refreshTimer = null;
+                }}
+            }}
+
+            function scheduleRefresh() {{
+                cancelRefresh();
+                if (!document.hidden) {{
+                    refreshTimer = setTimeout(() => window.location.reload(), refreshIntervalMs);
+                }}
+            }}
+
+            document.addEventListener('visibilitychange', () => {{
+                if (document.hidden) {{
+                    wasHidden = true;
+                    cancelRefresh();
+                    return;
+                }}
+
+                if (wasHidden) {{
+                    window.location.reload();
+                    return;
+                }}
+
+                scheduleRefresh();
+            }});
+
+            scheduleRefresh();
         </script>
     </body>
     </html>
