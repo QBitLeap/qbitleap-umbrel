@@ -10,7 +10,12 @@ from urllib.parse import parse_qs, quote
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from config import get_miner_address, save_miner_address
+from config import (
+    get_miner_address,
+    get_public_mining_endpoint,
+    save_miner_address,
+    save_public_mining_endpoint,
+)
 from qbit import rpc
 
 app = FastAPI(title="QBitLeap")
@@ -438,8 +443,15 @@ async def home(request: Request):
     )
     hall_html = render_hall_of_blocks(hall)
 
-    dashboard_host = request.url.hostname or "umbrel.local"
-    stratum_endpoint = f"stratum+tcp://{dashboard_host}:{CKPOOL_STRATUM_PORT}"
+    public_host, public_port = get_public_mining_endpoint()
+    endpoint_host = public_host
+    if ":" in endpoint_host and not endpoint_host.startswith("["):
+        endpoint_host = f"[{endpoint_host}]"
+    public_endpoint = (
+        f"stratum+tcp://{endpoint_host}:{public_port}"
+        if public_host
+        else ""
+    )
 
     status_message = request.query_params.get("message", "")
     error_message = request.query_params.get("error", "")
@@ -499,7 +511,6 @@ async def home(request: Request):
                     <strong>CKPool</strong>
                     <div style="margin-top:8px;">Status: {escape(ckpool_status)}</div>
                     <div style="margin-top:6px;">Stratum: {escape(stratum_status)}</div>
-                    <div style="margin-top:6px;">Local endpoint: <code>{escape(stratum_endpoint)}</code></div>
                     <div style="margin-top:6px;">Users: {ckpool_stats['users']}</div>
                     <div style="margin-top:6px;">Workers: {ckpool_stats['workers']}</div>
                     <div style="margin-top:6px;">Active / idle / disconnected: {active_workers} / {ckpool_stats['idle']} / {ckpool_stats['disconnected']}</div>
@@ -528,6 +539,20 @@ async def home(request: Request):
             <details class="card" data-section-key="hall-of-blocks" open>
                 <summary>🏆 QBitLeap Hall of Blocks</summary>
                 {hall_html}
+            </details>
+
+            <details class="card" data-section-key="public-endpoint" open>
+                <summary>Public Mining Endpoint</summary>
+                <p style="color:#bbb;line-height:1.5;">Save the public Internet host and external TCP port that NiceHash will use. This setting displays your connection string; it does not open your router or change CKPool's internal port.</p>
+                <p>Current endpoint: <strong>{f'<code>{escape(public_endpoint)}</code>' if public_endpoint else 'Not configured'}</strong></p>
+                <form method="post" action="/settings/public-endpoint">
+                    <label for="public_host" style="display:block;margin-bottom:8px;">Public host or IP</label>
+                    <input id="public_host" name="public_host" type="text" value="{escape(public_host, quote=True)}" placeholder="miner.example.com or public IP" autocomplete="off" spellcheck="false" required style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #555;border-radius:4px;background:#0d0d0d;color:white;font-family:monospace;font-size:15px;">
+                    <label for="public_port" style="display:block;margin:16px 0 8px;">Public Stratum port</label>
+                    <input id="public_port" name="public_port" type="number" min="1" max="65535" step="1" value="{public_port}" required style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #555;border-radius:4px;background:#0d0d0d;color:white;font-family:monospace;font-size:15px;">
+                    <p style="margin:12px 0 0;color:#999;line-height:1.5;">Your router must forward this public TCP port to this Umbrel's TCP port 3333. The public port may also be 3333.</p>
+                    <button type="submit" style="margin-top:16px;padding:11px 18px;border:0;border-radius:4px;background:#20b957;color:white;font-size:15px;font-weight:bold;cursor:pointer;">Save public endpoint</button>
+                </form>
             </details>
 
             <details class="card" data-section-key="payout-address" open>
@@ -605,6 +630,31 @@ async def update_miner_address(request: Request):
 
         message = quote(
             "Payout address saved. Restart the app to apply it to CKPool."
+        )
+        return RedirectResponse(
+            url=f"/?message={message}",
+            status_code=303,
+        )
+    except Exception as error:
+        error_message = quote(str(error))
+        return RedirectResponse(
+            url=f"/?error={error_message}",
+            status_code=303,
+        )
+
+
+@app.post("/settings/public-endpoint")
+async def update_public_endpoint(request: Request):
+    try:
+        body = await request.body()
+        form_data = parse_qs(body.decode("utf-8"))
+        public_host = form_data.get("public_host", [""])[0]
+        public_port = form_data.get("public_port", [""])[0]
+
+        save_public_mining_endpoint(public_host, public_port)
+
+        message = quote(
+            "Public mining endpoint saved. Forward the selected public TCP port to this Umbrel's TCP port 3333 before connecting NiceHash."
         )
         return RedirectResponse(
             url=f"/?message={message}",
