@@ -98,10 +98,10 @@ def save_public_mining_endpoint(host: str, port: str | int) -> None:
     try:
         normalized_port = int(str(port).strip())
     except (TypeError, ValueError):
-        raise ValueError("Public Stratum port must be a whole number")
+        raise ValueError("Public/router port must be a whole number")
 
     if not 1 <= normalized_port <= 65535:
-        raise ValueError("Public Stratum port must be between 1 and 65535")
+        raise ValueError("Public/router port must be between 1 and 65535")
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     temporary_path = PUBLIC_ENDPOINT_FILE.with_suffix(".tmp")
