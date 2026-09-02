@@ -1,10 +1,10 @@
-# Qbit Solo
+# Qbit Solo Miner
 
-Qbit Solo is a focused Umbrel application for permissionless Qbit solo mining.
+Qbit Solo Miner is a focused Umbrel application for permissionless Qbit solo mining.
 
 ## Current App
 
-### Qbit Solo
+### Qbit Solo Miner
 
 A native Umbrel application for running:
 

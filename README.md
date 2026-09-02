@@ -1,4 +1,4 @@
-# Qbit Solo
+# Qbit Solo Miner
 
 Private, permissionless Qbit solo mining on Umbrel. The app runs Qbit Core,
 the official Qbit-adapted CKPool stack, and a local dashboard. SHA256d miners

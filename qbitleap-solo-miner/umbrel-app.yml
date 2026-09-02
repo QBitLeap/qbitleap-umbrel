@@ -1,7 +1,7 @@
 manifestVersion: 1
 id: qbitleap-solo-miner
 category: bitcoin
-name: Qbit Solo
+name: Qbit Solo Miner
 version: "0.2.0"
 tagline: Permissionless solo mining for Qbit
 description: >-
