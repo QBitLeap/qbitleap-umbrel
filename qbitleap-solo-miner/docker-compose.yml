@@ -5,76 +5,151 @@ services:
     environment:
       APP_HOST: qbitleap-solo-miner_dashboard_1
       APP_PORT: 8000
+      PROXY_AUTH_ADD: "false"
 
-  config-init:
-    image: ghcr.io/qbitleap/qbitleap-backend:0.1.10
-    command: ["/usr/local/bin/init-qbit-config.sh"]
+  config_init:
+    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.0
     restart: "no"
+    command: ["/usr/local/bin/init-qbit-config.sh"]
     volumes:
       - ${APP_DATA_DIR}/data/config:/config
 
-  dashboard:
-    image: ghcr.io/qbitleap/qbitleap-backend:0.1.10
-    restart: on-failure
+  qbitd:
+    image: ghcr.io/qbitleap/qbit-solo-qbitd:0.2.0
+    restart: unless-stopped
+    stop_grace_period: 2m
     depends_on:
-      config-init:
+      config_init:
         condition: service_completed_successfully
+    command:
+      - -printtoconsole
+      - -conf=/config/qbit.conf
+      - -datadir=/var/lib/qbit
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=127.0.0.1
+      - -rpcallowip=10.0.0.0/8
+      - -rpcallowip=172.16.0.0/12
+      - -rpcallowip=192.168.0.0/16
+      - -rpcworkqueue=64
+      - -rpcport=8352
+      - -port=8355
+      - -listen=1
+      - -fallbackfee=0.00001000
+      - -chain=main
+      - -asert
+    environment:
+      QBIT_PRODUCTION: "1"
+      QBIT_TOOLS_PRODUCTION: "1"
+      QBIT_CHAIN: mainnet
+      CKPOOL_NON_TEST_READINESS_GATE: "1"
+      QBIT_MAINNET_LAUNCH_READINESS_CHECKS_ENABLED: "1"
+    ports:
+      - "8355:8355"
+    volumes:
+      - ${APP_DATA_DIR}/data/config:/config:ro
+      - ${APP_DATA_DIR}/data/qbit:/var/lib/qbit
+    healthcheck:
+      test: [CMD-SHELL, "qbit-cli -conf=/config/qbit.conf -rpcconnect=127.0.0.1 -rpcport=8352 getblockchaininfo >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  ckpool:
+    image: ghcr.io/qbitleap/qbit-solo-ckpool:0.2.0
+    restart: unless-stopped
+    depends_on:
       qbitd:
-        condition: service_started
+        condition: service_healthy
+    environment:
+      QBIT_PRODUCTION: "1"
+      QBIT_TOOLS_PRODUCTION: "1"
+      QBIT_CHAIN: mainnet
+      QBIT_RPC_HOST: qbitd
+      QBIT_RPC_PORT: "8352"
+      CKPOOL_MINDIFF: "1024"
+      CKPOOL_STARTDIFF: "8192"
+      CKPOOL_MAXDIFF: "4294967296"
+      CKPOOL_STRATUM_PORT: "3333"
+      CKPOOL_PUBLIC_DIFF_POLICY: explicit
+      CKPOOL_NON_TEST_READINESS_GATE: "1"
+      CKPOOL_MIN_PEERS: "1"
+      CKPOOL_REQUIRE_P2MR_PAYOUT: "1"
+      QBIT_EXPECTED_ADDRESS_HRP: qb
+      QBIT_EXPECTED_GENESIS_HASH: 0000000000004d60aa5d46013991d0a0e2995d89ee98e53068ae196d763e79f2
+      CKPOOL_VERSION_MASK: 1fffe000
+      CKPOOL_VERSION_MASK_MODE: dynamic
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        set -euo pipefail
+        for attempt in $$(seq 1 300); do
+          if [[ -s /config/miner_address && -s /config/rpc_credentials ]]; then
+            credentials="$$(tr -d '\r\n' < /config/rpc_credentials)"
+            export QBIT_RPC_USER="$${credentials%%:*}"
+            export QBIT_RPC_PASSWORD="$${credentials#*:}"
+            export QBIT_MINER_ADDRESS="$$(tr -d '\r\n' < /config/miner_address)"
+            exec /usr/local/bin/start-ckpool.sh
+          fi
+          sleep 1
+        done
+        echo "Qbit Solo: waiting for a payout address" >&2
+        exit 1
+    ports:
+      - "3335:3333"
+    volumes:
+      - ${APP_DATA_DIR}/data/config:/config:ro
+      - ${APP_DATA_DIR}/data/ckpool/logs:/var/log/ckpool
+    healthcheck:
+      test: [CMD-SHELL, "bash -lc 'exec 3<>/dev/tcp/127.0.0.1/3333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  dashboard:
+    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.0
+    restart: unless-stopped
+    depends_on:
+      qbitd:
+        condition: service_healthy
       ckpool:
         condition: service_started
     environment:
       QBIT_RPC_HOST: qbitd
-      QBIT_RPC_PORT: 8352
-      CKPOOL_SOCKET_PATH: /ckpool-sock/qbitlab/stratifier
-      CKPOOL_STATUS_PATH: /ckpool-logs/pool/pool.status
+      QBIT_RPC_PORT: "8352"
       CKPOOL_STRATUM_HOST: ckpool
       CKPOOL_STRATUM_PORT: "3333"
+      CKPOOL_STATUS_PATH: /ckpool-logs/pool/rejects.status
+      PERMISSIONLESS_TELEMETRY_FILE: /telemetry/permissionless.json
     volumes:
       - ${APP_DATA_DIR}/data/config:/config
       - ${APP_DATA_DIR}/data/ckpool/logs:/ckpool-logs:ro
-      - ${APP_DATA_DIR}/data/ckpool/sock:/ckpool-sock:ro
+      - ${APP_DATA_DIR}/data/telemetry:/telemetry:ro
 
-  qbitd:
-    image: ghcr.io/qbitleap/qbitleap-qbit-core:0.1.0
-    restart: on-failure
+  telemetry:
+    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.0
+    restart: unless-stopped
     depends_on:
-      config-init:
-        condition: service_completed_successfully
-    volumes:
-      - ${APP_DATA_DIR}/data/qbit:/data
-      - ${APP_DATA_DIR}/data/config:/config:ro
-    command:
-      - -datadir=/data
-      - -conf=/config/qbit.conf
-
-  ckpool:
-    image: ghcr.io/qbitleap/qbitleap-ckpool:0.1.0
-    restart: on-failure
-    depends_on:
-      config-init:
-        condition: service_completed_successfully
-      qbitd:
+      ckpool:
         condition: service_started
+    command:
+      - /bin/sh
+      - -c
+      - |
+        credentials="$$(tr -d '\r\n' < /config/rpc_credentials)"
+        export QBIT_RPC_USER="$${credentials%%:*}"
+        export QBIT_RPC_PASSWORD="$${credentials#*:}"
+        exec python /app/permissionless_telemetry.py
     environment:
-      QBIT_CHAIN: mainnet
-      QBIT_EXPECTED_GENESIS_HASH: "0000000000004d60aa5d46013991d0a0e2995d89ee98e53068ae196d763e79f2"
-      CKPOOL_MINDIFF: "1024"
-      CKPOOL_STARTDIFF: "65536"
-      CKPOOL_STRATUM_PORT: "3333"
-      CKPOOL_LOG_DIR: /var/log/ckpool
-      CKPOOL_SOCK_DIR: /tmp/qbitlab
-    ports:
-      - "3333:3333"
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - bash -lc 'exec 3<>/dev/tcp/127.0.0.1/3333'
-      interval: 5m
-      timeout: 5s
-      retries: 3
-      start_period: 60s
+      CKPOOL_STATUS_FILE: /ckpool-logs/pool/rejects.status
+      PERMISSIONLESS_TELEMETRY_FILE: /telemetry/permissionless.json
+      PERMISSIONLESS_STATE_FILE: /telemetry/permissionless-state.json
+      QBT_ADDRESS_FILE: /config/miner_address
+      QBIT_RPC_HOST: qbitd
+      QBIT_RPC_PORT: "8352"
     volumes:
       - ${APP_DATA_DIR}/data/config:/config:ro
-      - ${APP_DATA_DIR}/data/ckpool/logs:/var/log/ckpool
-      - ${APP_DATA_DIR}/data/ckpool/sock:/tmp/qbitlab
+      - ${APP_DATA_DIR}/data/ckpool/logs:/ckpool-logs:ro
+      - ${APP_DATA_DIR}/data/telemetry:/telemetry

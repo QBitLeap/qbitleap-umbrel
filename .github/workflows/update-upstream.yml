@@ -1,0 +1,195 @@
+name: Release upstream update
+
+on:
+  schedule:
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: update-qbit-mining-bootstrap
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: https://github.com/Qbit-Org/qbit-mining-bootstrap.git
+  VENDORED_DIRECTORY: qbitleap-solo-miner/upstream/qbit-mining-bootstrap
+  DASHBOARD_DIRECTORY: qbitleap-solo-miner
+  DASHBOARD_IMAGE: ghcr.io/qbitleap/qbit-solo-dashboard
+  QBITD_IMAGE: ghcr.io/qbitleap/qbit-solo-qbitd
+  CKPOOL_IMAGE: ghcr.io/qbitleap/qbit-solo-ckpool
+
+jobs:
+  propose-update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Load pinned upstream commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'PINNED_COMMIT=%s\n' "$(tr -d '[:space:]' < UPSTREAM_COMMIT)" >> "${GITHUB_ENV}"
+
+      - name: Fetch official upstream main
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --branch main --depth 1 "${UPSTREAM_REPOSITORY}" "${RUNNER_TEMP}/qbit-mining-bootstrap"
+          upstream_commit="$(git -C "${RUNNER_TEMP}/qbit-mining-bootstrap" rev-parse HEAD)"
+          printf 'UPSTREAM_COMMIT=%s\n' "${upstream_commit}" >> "${GITHUB_ENV}"
+          if [[ "${upstream_commit}" == "${PINNED_COMMIT}" ]]; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Stop when the pin is current
+        if: steps.upstream.outputs.changed == 'false'
+        run: echo "The vendored upstream pin is current."
+
+      - name: Replace the vendored snapshot
+        if: steps.upstream.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -a --delete --exclude=.git/ \
+            "${RUNNER_TEMP}/qbit-mining-bootstrap/" \
+            "${VENDORED_DIRECTORY}/"
+          printf '%s\n' "${UPSTREAM_COMMIT}" > UPSTREAM_COMMIT
+          sed -i "s/${PINNED_COMMIT}/${UPSTREAM_COMMIT}/g" UPSTREAM.md
+          upstream_version="$(tr -d '[:space:]' < "${VENDORED_DIRECTORY}/VERSION")"
+          sed -E -i "s/^- Upstream-reported version: .*/- Upstream-reported version: \`${upstream_version}\`/" UPSTREAM.md
+
+      - name: Bump Umbrel app version
+        if: steps.upstream.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="qbitleap-solo-miner/umbrel-app.yml"
+          compose="qbitleap-solo-miner/docker-compose.yml"
+          current_version="$(sed -n 's/^version: "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' "${manifest}")"
+          if [[ -z "${current_version}" ]]; then
+            echo "Could not read a semantic app version from ${manifest}" >&2
+            exit 1
+          fi
+          IFS=. read -r major minor patch <<< "${current_version}"
+          app_version="${major}.${minor}.$((patch + 1))"
+          sed -i "s/^version: \"${current_version}\"$/version: \"${app_version}\"/" "${manifest}"
+          sed -i "s|^releaseNotes:.*$|releaseNotes: \"Automatically synced qbit-mining-bootstrap upstream to ${UPSTREAM_COMMIT:0:12}.\"|" "${manifest}"
+          sed -E -i "s#(ghcr.io/qbitleap/qbit-solo-(dashboard|qbitd|ckpool):)[^[:space:]]+#\\1${app_version}#g" "${compose}"
+          printf 'APP_VERSION=%s\n' "${app_version}" >> "${GITHUB_ENV}"
+
+      - name: Verify proposed snapshot
+        if: steps.upstream.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C "${RUNNER_TEMP}/qbit-mining-bootstrap" ls-tree -r HEAD > "${RUNNER_TEMP}/official-tree.txt"
+          git add --all
+          repository_tree="$(git write-tree)"
+          git ls-tree -r "${repository_tree}" -- "${VENDORED_DIRECTORY}" \
+            | sed "s#	${VENDORED_DIRECTORY}/#	#" \
+            > "${RUNNER_TEMP}/vendored-tree.txt"
+          diff -u "${RUNNER_TEMP}/official-tree.txt" "${RUNNER_TEMP}/vendored-tree.txt"
+
+      - name: Verify Umbrel compatibility
+        if: steps.upstream.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' "${VENDORED_DIRECTORY}/VERSION"
+          test -f "${VENDORED_DIRECTORY}/docker/ckpool/start-ckpool.sh"
+          test -f "${VENDORED_DIRECTORY}/docker/ckpool/qbit-ckpool-preflight.py"
+          "${VENDORED_DIRECTORY}/scripts/prepare-qbit-source.sh"
+          test -f "${VENDORED_DIRECTORY}/generated/qbit-src/CMakeLists.txt"
+          test -f "${VENDORED_DIRECTORY}/generated/qbit-src/test/functional/test_framework/auxpow.py"
+          python3 -m pip install --disable-pip-version-check -r "${DASHBOARD_DIRECTORY}/backend/requirements.txt"
+          python3 -m py_compile "${DASHBOARD_DIRECTORY}"/backend/*.py
+          PYTHONPATH="${DASHBOARD_DIRECTORY}/backend" \
+            python3 -m unittest -v "${DASHBOARD_DIRECTORY}/backend/test_permissionless_telemetry.py"
+          PYTHONPATH="${DASHBOARD_DIRECTORY}/backend" \
+            python3 -m unittest -v "${DASHBOARD_DIRECTORY}/backend/test_dashboard.py"
+          python3 -m unittest -v "${DASHBOARD_DIRECTORY}/test_compose_contract.py"
+
+      - name: Set up Docker Buildx
+        if: steps.upstream.outputs.changed == 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        if: steps.upstream.outputs.changed == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish dashboard
+        if: steps.upstream.outputs.changed == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ env.DASHBOARD_DIRECTORY }}
+          file: ${{ env.DASHBOARD_DIRECTORY }}/backend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.DASHBOARD_IMAGE }}:${{ env.APP_VERSION }}
+          cache-from: type=gha,scope=upstream-dashboard
+          cache-to: type=gha,mode=max,scope=upstream-dashboard
+
+      - name: Build and publish Qbit Core
+        if: steps.upstream.outputs.changed == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ env.VENDORED_DIRECTORY }}
+          file: ${{ env.VENDORED_DIRECTORY }}/docker/qbit/Dockerfile
+          build-contexts: |
+            qbit-src=${{ env.VENDORED_DIRECTORY }}/generated/qbit-src
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.QBITD_IMAGE }}:${{ env.APP_VERSION }}
+          cache-from: type=gha,scope=upstream-qbitd
+          cache-to: type=gha,mode=max,scope=upstream-qbitd
+
+      - name: Load pinned CKPool source
+        if: steps.upstream.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "${VENDORED_DIRECTORY}/config/upstream.env"
+          printf 'CKPOOL_GIT_URL=%s\nCKPOOL_GIT_REF=%s\n' "${CKPOOL_GIT_URL}" "${CKPOOL_GIT_REF}" >> "${GITHUB_ENV}"
+
+      - name: Build and publish CKPool
+        if: steps.upstream.outputs.changed == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ env.VENDORED_DIRECTORY }}
+          file: ${{ env.VENDORED_DIRECTORY }}/docker/ckpool/Dockerfile
+          build-args: |
+            CKPOOL_GIT_URL=${{ env.CKPOOL_GIT_URL }}
+            CKPOOL_GIT_REF=${{ env.CKPOOL_GIT_REF }}
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.CKPOOL_IMAGE }}:${{ env.APP_VERSION }}
+          cache-from: type=gha,scope=upstream-ckpool
+          cache-to: type=gha,mode=max,scope=upstream-ckpool
+
+      - name: Publish Umbrel release to main
+        if: steps.upstream.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Release ${APP_VERSION} with upstream ${UPSTREAM_COMMIT:0:12}"
+          git push origin HEAD:main

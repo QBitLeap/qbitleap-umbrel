@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import ipaddress
 import json
 import re
@@ -49,17 +51,17 @@ def save_miner_address(address: str) -> None:
 
 def get_public_mining_endpoint() -> tuple[str, int]:
     if not PUBLIC_ENDPOINT_FILE.exists():
-        return "", 3333
+        return "", 3335
 
     try:
         data = json.loads(PUBLIC_ENDPOINT_FILE.read_text(encoding="utf-8"))
         host = str(data.get("host", "")).strip()
-        port = int(data.get("port", 3333))
+        port = int(data.get("port", 3335))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return "", 3333
+        return "", 3335
 
     if not 1 <= port <= 65535:
-        port = 3333
+        port = 3335
 
     return host, port
 

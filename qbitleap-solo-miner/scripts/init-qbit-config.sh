@@ -18,12 +18,13 @@ RPC_PASSWORD="$(cut -d: -f2- "${CREDENTIALS_FILE}")"
 
 cat > "${QBIT_CONFIG}" <<EOF
 server=1
-rpcbind=0.0.0.0
-rpcallowip=0.0.0.0/0
+txindex=1
 rpcuser=${RPC_USER}
 rpcpassword=${RPC_PASSWORD}
 printtoconsole=1
 dbcache=512
+zmqpubrawblock=tcp://0.0.0.0:28332
+zmqpubrawtx=tcp://0.0.0.0:28333
 EOF
 
 chmod 600 "${QBIT_CONFIG}"

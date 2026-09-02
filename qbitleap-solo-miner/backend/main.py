@@ -1,7 +1,8 @@
+from __future__ import annotations
+
 import json
 import os
 import socket
-import stat
 from html import escape
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,14 +19,8 @@ from config import (
 )
 from qbit import rpc
 
-app = FastAPI(title="QBitLeap")
+app = FastAPI(title="Qbit Solo")
 
-CKPOOL_SOCKET_PATH = Path(
-    os.getenv(
-        "CKPOOL_SOCKET_PATH",
-        "/ckpool-sock/qbitlab/stratifier",
-    )
-)
 CKPOOL_STATUS_PATH = Path(
     os.getenv(
         "CKPOOL_STATUS_PATH",
@@ -35,6 +30,9 @@ CKPOOL_STATUS_PATH = Path(
 CKPOOL_STRATUM_HOST = os.getenv("CKPOOL_STRATUM_HOST", "ckpool")
 CKPOOL_STRATUM_PORT = int(os.getenv("CKPOOL_STRATUM_PORT", "3333"))
 HALL_OF_BLOCKS_PATH = Path(os.getenv("HALL_OF_BLOCKS_PATH", "/config/hall-of-blocks.json"))
+PERMISSIONLESS_TELEMETRY_FILE = Path(
+    os.getenv("PERMISSIONLESS_TELEMETRY_FILE", "/telemetry/permissionless.json")
+)
 
 
 def get_qbit_status() -> str:
@@ -53,13 +51,6 @@ def get_network_difficulty() -> float | None:
         return float(rpc("getdifficulty"))
     except (TypeError, ValueError, KeyError, RuntimeError):
         return None
-
-
-def ckpool_socket_is_running() -> bool:
-    try:
-        return stat.S_ISSOCK(CKPOOL_SOCKET_PATH.stat().st_mode)
-    except OSError:
-        return False
 
 
 def ckpool_stratum_is_listening() -> bool:
@@ -134,6 +125,18 @@ def format_number(value: object) -> str:
     if number >= 1_000:
         return f"{number / 1_000:.3g} K"
     return f"{number:.3f}".rstrip("0").rstrip(".")
+
+
+def format_hashrate(value: float) -> str:
+    units = ("H/s", "kH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s")
+    number = max(0.0, float(value))
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if number < 1000 or candidate == units[-1]:
+            break
+        number /= 1000
+    return f"{number:.2f} {unit}"
 
 
 def format_difficulty(value: float | None) -> str:
@@ -269,6 +272,7 @@ def update_hall_of_blocks(
     miner_address: str,
     best_share: float | None,
     network_difficulty: float | None,
+    reported_history: list[dict] | None = None,
 ) -> dict[str, object]:
     hall = load_hall_of_blocks()
     current_count = parse_count(reported_blocks_found)
@@ -277,11 +281,42 @@ def update_hall_of_blocks(
     if not isinstance(blocks, list):
         blocks = []
 
-    if current_count is not None and current_count > observed_count:
-        for _ in range(current_count - observed_count):
+    known_heights = {str(block.get("height")) for block in blocks if block.get("height") is not None}
+    for event in reversed(reported_history or []):
+        height = event.get("height")
+        if height is None or str(height) in known_heights:
+            continue
+        record = {
+            "height": height,
+            "found": format_time(event.get("found_at")),
+            "finder": event.get("worker") or miner_address or "Not reported",
+            "reward": "Paid directly to configured Qbit address",
+            "best_share": "Block-level share",
+            "network_difficulty": format_difficulty(network_difficulty),
+            "difficulty_ratio": "100% — accepted block",
+        }
+        if event.get("block_hash"):
+            record["block_hash"] = event["block_hash"]
+        blocks.append(record)
+        known_heights.add(str(height))
+
+    if reported_history:
+        # A block can be observed first by the worker submission path and again
+        # by the chain scanner. When detailed history exists, its unique block
+        # identities are more reliable than an aggregate event count.
+        unique_reported_blocks = {
+            str(event.get("height") or event.get("block_hash"))
+            for event in reported_history
+            if event.get("height") is not None or event.get("block_hash")
+        }
+        current_count = len(unique_reported_blocks)
+
+    if current_count is not None and current_count > max(observed_count, len(blocks)):
+        for _ in range(current_count - max(observed_count, len(blocks))):
             blocks.append(
                 get_tip_block_record(miner_address, best_share, network_difficulty)
             )
+    if current_count is not None and current_count >= observed_count:
         hall = {"observed_blocks_found": current_count, "blocks": blocks}
         try:
             save_hall_of_blocks(hall)
@@ -312,11 +347,18 @@ def render_hall_of_blocks(hall: dict[str, object]) -> str:
     entries = []
     for index, block in enumerate(reversed(blocks), start=1):
         display_number = len(blocks) - index + 1
+        block_hash_html = ""
+        if block.get("block_hash"):
+            block_hash_html = (
+                '<div style="margin-top: 6px;">Hash: <code>'
+                f'{escape(str(block["block_hash"]))}</code></div>'
+            )
         entries.append(f"""
             <article style="margin-top: 18px; padding-top: 18px; border-top: 1px solid #333;">
                 <strong>Block #{display_number}</strong>
                 <div style="margin-top: 10px;">Height: {escape(str(block.get('height', 'Not reported')))}</div>
                 <div style="margin-top: 6px;">Found: {escape(str(block.get('found', 'Not reported')))}</div>
+                {block_hash_html}
                 <div style="margin-top: 6px;">Finder: <code>{escape(str(block.get('finder', 'Not reported')))}</code></div>
                 <div style="margin-top: 6px;">Reward: {escape(str(block.get('reward', 'Not reported')))}</div>
                 <div style="margin-top: 6px;">Best share: {escape(str(block.get('best_share', 'Not reported')))}</div>
@@ -345,7 +387,37 @@ def read_ckpool_stats() -> dict[str, object]:
         "last_block": "Never reported",
         "blocks_found": "Not reported",
         "updated": "Not reported",
+        "block_history": [],
     }
+
+    try:
+        telemetry = json.loads(PERMISSIONLESS_TELEMETRY_FILE.read_text(encoding="utf-8"))
+        workers = telemetry.get("workers", [])
+        if not isinstance(workers, list):
+            workers = []
+        accepted = int(telemetry.get("accepted_shares", 0))
+        rejected = int(telemetry.get("rejected_shares", 0))
+        last_share = max((int(worker.get("last_share_at", 0)) for worker in workers), default=0)
+        blocks = telemetry.get("block_history", {}).get("qbit", [])
+        hashrate = float(telemetry.get("current_hashrate_hs", 0))
+        stats.update({
+            "users": int(telemetry.get("connected_workers", 0) > 0),
+            "workers": int(telemetry.get("connected_workers", 0)),
+            "idle": sum(1 for worker in workers if not worker.get("active")),
+            "hashrate_1m": format_hashrate(hashrate),
+            "hashrate_5m": format_hashrate(hashrate),
+            "hashrate_1h": format_hashrate(hashrate),
+            "accepted": format_count(accepted),
+            "rejected": format_count(rejected),
+            "last_share": format_time(last_share),
+            "last_block": format_time(blocks[0].get("found_at")) if blocks else "Never reported",
+            "blocks_found": format_count(len(blocks)),
+            "block_history": blocks,
+            "updated": format_time(telemetry.get("updated_at")),
+        })
+        return stats
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
 
     try:
         records = []
@@ -410,15 +482,13 @@ def read_ckpool_stats() -> dict[str, object]:
 
 
 def get_ckpool_status() -> tuple[str, str, dict[str, object]]:
-    process_running = ckpool_socket_is_running()
     stratum_listening = ckpool_stratum_is_listening()
 
-    if not process_running:
+    if not stratum_listening:
         return "Not Running", "Not Listening", read_ckpool_stats()
 
     stats = read_ckpool_stats()
-    stratum_status = "Listening" if stratum_listening else "Not Listening"
-    return "Running", stratum_status, stats
+    return "Running", "Listening", stats
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -440,6 +510,7 @@ async def home(request: Request):
         miner_address,
         numeric_best_share,
         network_difficulty,
+        ckpool_stats.get("block_history") if isinstance(ckpool_stats.get("block_history"), list) else None,
     )
     hall_html = render_hall_of_blocks(hall)
 
@@ -483,7 +554,7 @@ async def home(request: Request):
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>QBitLeap</title>
+        <title>Qbit Solo</title>
         <style>
             body {{ margin:0; background:#111; color:white; font-family:Arial,sans-serif; }}
             main {{ max-width:760px; margin:0 auto; padding:40px 24px; }}
@@ -497,8 +568,13 @@ async def home(request: Request):
     </head>
     <body>
         <main>
-            <h1 style="margin-bottom:8px;">QBitLeap</h1>
-            <h2 style="margin-top:0;color:#bbb;">Solo Mining Dashboard</h2>
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;">
+                <div>
+                    <h1 style="margin:0 0 8px;">Qbit Solo</h1>
+                    <h2 style="margin:0;color:#bbb;">Solo Mining Dashboard</h2>
+                </div>
+                <button type="button" onclick="window.location.href = window.location.pathname + '?refresh=' + Date.now()" style="padding:11px 18px;border:0;border-radius:4px;background:#4f7df3;color:white;font-size:15px;font-weight:bold;cursor:pointer;">Refresh</button>
+            </div>
             {notice_html}
 
             <details class="card" data-section-key="system-status" open>
@@ -537,7 +613,7 @@ async def home(request: Request):
             </details>
 
             <details class="card" data-section-key="hall-of-blocks" open>
-                <summary>🏆 QBitLeap Hall of Blocks</summary>
+                <summary>🏆 Qbit Solo Blocks Found</summary>
                 {hall_html}
             </details>
 
@@ -550,7 +626,7 @@ async def home(request: Request):
                     <input id="public_host" name="public_host" type="text" value="{escape(public_host, quote=True)}" placeholder="miner.example.com or public IP" autocomplete="off" spellcheck="false" required style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #555;border-radius:4px;background:#0d0d0d;color:white;font-family:monospace;font-size:15px;">
                     <label for="public_port" style="display:block;margin:16px 0 8px;">Public / router port</label>
                     <input id="public_port" name="public_port" type="number" min="1" max="65535" step="1" value="{public_port}" required style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #555;border-radius:4px;background:#0d0d0d;color:white;font-family:monospace;font-size:15px;">
-                    <p style="margin:12px 0 0;color:#999;line-height:1.5;">QBitLeap listens on TCP 3333 inside every Umbrel installation. Forward the public/router port entered above to this Umbrel's TCP port 3333. The two ports may be the same or different.</p>
+                    <p style="margin:12px 0 0;color:#999;line-height:1.5;">Qbit Solo accepts miners on the Umbrel host's TCP port 3335. CKPool remains isolated on its upstream-standard container port 3333.</p>
                     <button type="submit" style="margin-top:16px;padding:11px 18px;border:0;border-radius:4px;background:#20b957;color:white;font-size:15px;font-weight:bold;cursor:pointer;">Save public endpoint</button>
                 </form>
             </details>
@@ -654,7 +730,7 @@ async def update_public_endpoint(request: Request):
         save_public_mining_endpoint(public_host, public_port)
 
         message = quote(
-            "Public mining endpoint saved. Forward the selected public/router TCP port to this Umbrel's fixed TCP port 3333 before connecting NiceHash."
+            "Public mining endpoint saved. Forward the selected public/router TCP port to this Umbrel's fixed TCP port 3335 before connecting external hashpower."
         )
         return RedirectResponse(
             url=f"/?message={message}",
