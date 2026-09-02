@@ -6,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 COMPOSE = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 MANIFEST = (ROOT / "umbrel-app.yml").read_text(encoding="utf-8")
+STORE = (ROOT.parent / "umbrel-app-store.yml").read_text(encoding="utf-8")
 
 
 class ComposeContractTests(unittest.TestCase):
@@ -30,6 +31,12 @@ class ComposeContractTests(unittest.TestCase):
         manifest_port = re.search(r"^port: ([0-9]+)$", MANIFEST, re.MULTILINE).group(1)
         proxy_port = re.search(r"APP_PORT: ([0-9]+)", COMPOSE).group(1)
         self.assertEqual(manifest_port, proxy_port)
+
+    def test_app_id_is_namespaced_to_the_community_store(self):
+        store_id = re.search(r"^id: ([^\s]+)$", STORE, re.MULTILINE).group(1)
+        app_id = re.search(r"^id: ([^\s]+)$", MANIFEST, re.MULTILINE).group(1)
+        self.assertTrue(app_id.startswith(f"{store_id}-"))
+        self.assertEqual(ROOT.name, app_id)
 
 
 if __name__ == "__main__":
