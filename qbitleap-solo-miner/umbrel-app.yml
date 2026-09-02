@@ -2,7 +2,7 @@ manifestVersion: 1
 id: qbitleap-solo-miner
 category: bitcoin
 name: Qbit Solo Miner
-version: "0.2.0"
+version: "0.2.1"
 tagline: Permissionless solo mining for Qbit
 description: >-
   Run Qbit Core and a private permissionless CKPool on Umbrel. Point any
@@ -19,4 +19,4 @@ gallery: []
 path: ""
 defaultUsername: ""
 defaultPassword: ""
-releaseNotes: "Rebuilt Qbit Solo on the pinned official Qbit Core and permissionless CKPool stack with production readiness checks and miner-friendly vardiff."
+releaseNotes: "Adds the Qbit Solo Miner application icon and refreshes Umbrel's cached app metadata."
