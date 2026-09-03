@@ -2,6 +2,7 @@ manifestVersion: 1
 id: qbitleap-solo-miner
 category: bitcoin
 name: Qbit Solo Miner
+icon: https://raw.githubusercontent.com/QBitLeap/qbitleap-umbrel/main/qbitleap-solo-miner/icon.svg
 version: "0.2.1"
 tagline: Permissionless solo mining for Qbit
 description: >-

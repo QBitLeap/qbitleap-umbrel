@@ -38,6 +38,13 @@ class ComposeContractTests(unittest.TestCase):
         self.assertTrue(app_id.startswith(f"{store_id}-"))
         self.assertEqual(ROOT.name, app_id)
 
+    def test_manifest_declares_the_published_icon(self):
+        self.assertIn(
+            "icon: https://raw.githubusercontent.com/QBitLeap/qbitleap-umbrel/main/"
+            "qbitleap-solo-miner/icon.svg",
+            MANIFEST,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
