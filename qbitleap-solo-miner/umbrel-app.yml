@@ -3,7 +3,7 @@ id: qbitleap-solo-miner
 category: bitcoin
 name: Qbit Solo Miner
 icon: https://raw.githubusercontent.com/QBitLeap/qbitleap-umbrel/main/qbitleap-solo-miner/icon.svg
-version: "0.2.1"
+version: "0.2.2"
 tagline: Permissionless solo mining for Qbit
 description: >-
   Run Qbit Core and a private permissionless CKPool on Umbrel. Point any

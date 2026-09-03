@@ -547,6 +547,19 @@ async def home(request: Request):
     active_workers = max(
         int(ckpool_stats["workers"]) - int(ckpool_stats["idle"]), 0
     )
+    accepted_count = parse_count(ckpool_stats.get("accepted")) or 0
+    rejected_count = parse_count(ckpool_stats.get("rejected")) or 0
+    share_count = accepted_count + rejected_count
+    rejected_percent = (rejected_count * 100 / share_count) if share_count else 0.0
+    if ckpool_status != "Running":
+        mining_status = "Needs Attention"
+        mining_status_class = "bad"
+    elif active_workers:
+        mining_status = "Mining Normally"
+        mining_status_class = "good"
+    else:
+        mining_status = "Ready — Waiting for Miner"
+        mining_status_class = "warn"
 
     return f"""
     <!doctype html>
@@ -556,69 +569,86 @@ async def home(request: Request):
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Qbit Solo</title>
         <style>
-            body {{ margin:0; background:#111; color:white; font-family:Arial,sans-serif; }}
-            main {{ max-width:760px; margin:0 auto; padding:40px 24px; }}
-            details.card {{ margin-top:24px; padding:0 24px 24px; border:1px solid #333; border-radius:8px; background:#181818; }}
-            details.card > summary {{ cursor:pointer; font-size:19px; font-weight:bold; padding:24px 0; list-style:none; }}
+            :root {{ color-scheme:dark; --bg:#0c1017; --panel:#151b25; --line:#283142; --text:#f5f7fa; --muted:#98a2b3; --accent:#7c9cff; --good:#36c275; --warn:#e4ad3d; --bad:#f05d68; }}
+            * {{ box-sizing:border-box; }}
+            body {{ margin:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,sans-serif; }}
+            main {{ width:min(760px,calc(100% - 32px)); margin:40px auto; }}
+            .header {{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:24px; }}
+            h1 {{ margin:0; font-size:28px; }}
+            .subtitle {{ margin:6px 0 0; color:var(--muted); font-size:14px; font-weight:500; }}
+            details.card {{ margin:0 0 18px; padding:0; border:1px solid var(--line); border-radius:14px; background:var(--panel); overflow:hidden; }}
+            details.card > summary {{ position:relative; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:17px; font-weight:700; padding:22px; list-style:none; }}
             details.card > summary::-webkit-details-marker {{ display:none; }}
-            details.card > summary::before {{ content:'▶'; display:inline-block; width:22px; color:#aaa; font-size:13px; }}
-            details.card[open] > summary::before {{ content:'▼'; }}
+            details.card > summary::after {{ content:'▸'; position:absolute; right:22px; color:var(--muted); }}
+            details.card[open] > summary::after {{ transform:rotate(90deg); }}
+            .card-body {{ padding:0 22px 22px; }}
+            .service-row {{ display:flex; justify-content:space-between; align-items:center; gap:18px; padding:12px 0; }}
+            .service-row + .service-row, .metric-row + .metric-row {{ border-top:1px solid var(--line); }}
+            .service-name {{ display:flex; align-items:center; gap:10px; font-weight:650; }}
+            .service-dot {{ width:12px; height:12px; border-radius:3px; background:var(--good); flex:0 0 auto; }}
+            .service-dot.down {{ background:var(--bad); }}
+            .metric-row {{ display:flex; justify-content:space-between; align-items:center; gap:18px; padding:12px 0; }}
+            .metric-value {{ font-weight:700; text-align:right; }}
+            .good {{ color:var(--good); }} .warn {{ color:var(--warn); }} .bad {{ color:var(--bad); }}
+            .muted {{ color:var(--muted); font-size:13px; line-height:1.5; }}
+            label {{ display:block; font-weight:600; margin:0 0 8px !important; }}
+            input {{ box-sizing:border-box; width:100% !important; border:1px solid var(--line) !important; border-radius:9px !important; padding:12px !important; background:#0e141e !important; color:var(--text) !important; font:inherit; }}
+            button {{ border:0 !important; border-radius:9px !important; padding:10px 16px !important; background:var(--accent) !important; color:#08101f !important; font:inherit !important; font-weight:700 !important; cursor:pointer; }}
+            article {{ border-color:var(--line) !important; }}
             code {{ overflow-wrap:anywhere; }}
+            .footer {{ color:var(--muted); font-size:12px; text-align:center; margin:24px 0 0; }}
+            @media (max-width:560px) {{ .service-row,.metric-row {{ align-items:flex-start; }} .metric-value {{ max-width:58%; }} }}
         </style>
     </head>
     <body>
         <main>
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;">
+            <div class="header">
                 <div>
-                    <h1 style="margin:0 0 8px;">Qbit Solo</h1>
-                    <h2 style="margin:0;color:#bbb;">Solo Mining Dashboard</h2>
+                    <h1>Qbit Solo Miner</h1>
+                    <div class="subtitle">Permissionless Qbit solo mining</div>
                 </div>
-                <button type="button" onclick="window.location.href = window.location.pathname + '?refresh=' + Date.now()" style="padding:11px 18px;border:0;border-radius:4px;background:#4f7df3;color:white;font-size:15px;font-weight:bold;cursor:pointer;">Refresh</button>
+                <button type="button" onclick="window.location.href = window.location.pathname + '?refresh=' + Date.now()">Refresh</button>
             </div>
             {notice_html}
 
             <details class="card" data-section-key="system-status" open>
                 <summary>System Status</summary>
-                <div style="margin-bottom:24px;">
-                    <strong>Qbit Core</strong>
-                    <div style="margin-top:8px;">Status: {escape(qbit_status)}</div>
-                </div>
-                <div>
-                    <strong>CKPool</strong>
-                    <div style="margin-top:8px;">Status: {escape(ckpool_status)}</div>
-                    <div style="margin-top:6px;">Stratum: {escape(stratum_status)}</div>
-                    <div style="margin-top:6px;">Users: {ckpool_stats['users']}</div>
-                    <div style="margin-top:6px;">Workers: {ckpool_stats['workers']}</div>
-                    <div style="margin-top:6px;">Active / idle / disconnected: {active_workers} / {ckpool_stats['idle']} / {ckpool_stats['disconnected']}</div>
-                    <div style="margin-top:6px;">Hashrate (1m): {escape(str(ckpool_stats['hashrate_1m']))}</div>
-                    <div style="margin-top:6px;">Hashrate (5m): {escape(str(ckpool_stats['hashrate_5m']))}</div>
-                    <div style="margin-top:6px;">Hashrate (1h): {escape(str(ckpool_stats['hashrate_1h']))}</div>
-                    <div style="margin-top:6px;">Accepted shares: {escape(str(ckpool_stats['accepted']))}</div>
-                    <div style="margin-top:6px;">Rejected shares: {escape(str(ckpool_stats['rejected']))}</div>
-                    <div style="margin-top:6px;">Best share: {escape(str(ckpool_stats['best_share']))}</div>
-                    <div style="margin-top:6px;">Last accepted share: {escape(str(ckpool_stats['last_share']))}</div>
-                    <div style="margin-top:6px;">Last block found: {escape(str(ckpool_stats['last_block']))}</div>
-                    <div style="margin-top:6px;">Blocks found: {escape(str(ckpool_stats['blocks_found']))}</div>
-                    <div style="margin-top:6px;color:#999;">CKPool stats updated: {escape(str(ckpool_stats['updated']))}</div>
+                <div class="card-body">
+                    <div class="service-row"><span class="service-name"><span class="service-dot{' down' if qbit_status.startswith('Not Connected') else ''}"></span>Qbit Core</span><span class="metric-value">{escape(qbit_status)}</span></div>
+                    <div class="service-row"><span class="service-name"><span class="service-dot{' down' if ckpool_status != 'Running' else ''}"></span>Solo Mining Backend</span><span class="metric-value">{escape(ckpool_status)}</span></div>
+                    <div class="metric-row"><span>Status</span><span class="metric-value {mining_status_class}">{mining_status}</span></div>
+                    <div class="metric-row"><span>Connected Miners</span><span class="metric-value">{active_workers}</span></div>
+                    <div class="metric-row"><span>Total Hashrate</span><span class="metric-value">{escape(str(ckpool_stats['hashrate_1m']))}</span></div>
+                    <div class="metric-row"><span>Accepted Shares</span><span class="metric-value">{escape(str(ckpool_stats['accepted']))}</span></div>
+                    <div class="metric-row"><span>Rejected Shares</span><span class="metric-value">{rejected_percent:.1f}%</span></div>
+                    <div class="metric-row"><span>Last Share Received</span><span class="metric-value">{escape(str(ckpool_stats['last_share']))}</span></div>
+                    <div class="metric-row"><span>Stratum Port</span><span class="metric-value">3335 · {escape(stratum_status)}</span></div>
+                    <div class="metric-row"><span>Blocks Found</span><span class="metric-value">{escape(str(ckpool_stats['blocks_found']))}</span></div>
+                    <p class="footer">Telemetry updated: {escape(str(ckpool_stats['updated']))}</p>
                 </div>
             </details>
 
             <details class="card" data-section-key="mining-progress" open>
                 <summary>Mining Progress</summary>
+                <div class="card-body">
                 <div style="font-size:20px;font-weight:bold;">{escape(format_percent(best_share_percent))}</div>
                 <div style="margin-top:6px;color:#aaa;line-height:1.4;">Best share compared with current network difficulty. This is a closest-attempt record, not the probability of the next share.</div>
                 <div style="margin-top:20px;">Best share: {escape(str(ckpool_stats['best_share']))}</div>
                 <div style="margin-top:6px;">Current network difficulty: {escape(format_difficulty(network_difficulty))}</div>
                 <div style="margin-top:6px;">Blocks found: {escape(str(ckpool_stats['blocks_found']))}</div>
+                </div>
             </details>
 
             <details class="card" data-section-key="hall-of-blocks" open>
                 <summary>🏆 Qbit Solo Blocks Found</summary>
+                <div class="card-body">
                 {hall_html}
+                </div>
             </details>
 
             <details class="card" data-section-key="public-endpoint" open>
                 <summary>Public Mining Endpoint</summary>
+                <div class="card-body">
                 <p style="color:#bbb;line-height:1.5;">Save the public Internet host and router-facing TCP port that NiceHash will use. This setting displays your connection string; it does not open your router or change CKPool's fixed listening port.</p>
                 <p>Current endpoint: <strong>{f'<code>{escape(public_endpoint)}</code>' if public_endpoint else 'Not configured'}</strong></p>
                 <form method="post" action="/settings/public-endpoint">
@@ -629,10 +659,12 @@ async def home(request: Request):
                     <p style="margin:12px 0 0;color:#999;line-height:1.5;">Qbit Solo accepts miners on the Umbrel host's TCP port 3335. CKPool remains isolated on its upstream-standard container port 3333.</p>
                     <button type="submit" style="margin-top:16px;padding:11px 18px;border:0;border-radius:4px;background:#20b957;color:white;font-size:15px;font-weight:bold;cursor:pointer;">Save public endpoint</button>
                 </form>
+                </div>
             </details>
 
             <details class="card" data-section-key="payout-address" open>
                 <summary>Mining Payout Address</summary>
+                <div class="card-body">
                 <p style="color:#bbb;line-height:1.5;">Enter the external Qbit mainnet address that should receive any solo-mined block rewards. The app does not hold or manage wallet keys.</p>
                 <p>Current address: <strong>{configured_address_html}</strong></p>
                 <form method="post" action="/settings/miner-address">
@@ -640,7 +672,9 @@ async def home(request: Request):
                     <input id="miner_address" name="miner_address" type="text" value="{escape(miner_address, quote=True)}" placeholder="qb1..." autocomplete="off" spellcheck="false" required style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #555;border-radius:4px;background:#0d0d0d;color:white;font-family:monospace;font-size:15px;">
                     <button type="submit" style="margin-top:16px;padding:11px 18px;border:0;border-radius:4px;background:#20b957;color:white;font-size:15px;font-weight:bold;cursor:pointer;">Save payout address</button>
                 </form>
+                </div>
             </details>
+            <p class="footer">Automatic refresh every 5 minutes</p>
         </main>
         <script>
             document.querySelectorAll('details[data-section-key]').forEach((section) => {{
