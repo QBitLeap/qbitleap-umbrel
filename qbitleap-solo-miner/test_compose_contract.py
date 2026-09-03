@@ -58,6 +58,12 @@ class ComposeContractTests(unittest.TestCase):
         self.assertNotIn("<summary>Public Mining Endpoint</summary>", DASHBOARD)
         self.assertNotIn("<span>Stratum Port</span>", DASHBOARD)
 
+    def test_dashboard_status_rows_are_inline_and_secondary_cards_start_collapsed(self):
+        self.assertIn("flex-wrap:wrap; justify-content:center", DASHBOARD)
+        self.assertNotIn('data-section-key="hall-of-blocks" open', DASHBOARD)
+        self.assertNotIn('data-section-key="payout-address" open', DASHBOARD)
+        self.assertNotIn('return f"Connected — block', DASHBOARD)
+
 
 if __name__ == "__main__":
     unittest.main()

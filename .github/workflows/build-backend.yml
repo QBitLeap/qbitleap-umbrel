@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - "release/**"
     paths:
       - "qbitleap-solo-miner/backend/**"
       - "qbitleap-solo-miner/scripts/**"

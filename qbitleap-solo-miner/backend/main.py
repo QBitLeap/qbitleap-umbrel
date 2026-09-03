@@ -39,9 +39,9 @@ def get_qbit_status() -> str:
         blocks = blockchain["blocks"]
         progress = blockchain["verificationprogress"] * 100
 
-        return f"Connected — block {blocks:,}, sync {progress:.2f}%"
+        return f"Block {blocks:,}, sync {progress:.2f}%"
     except Exception as error:
-        return f"Not Connected — {type(error).__name__}"
+        return f"Unavailable — {type(error).__name__}"
 
 
 def get_network_difficulty() -> float | None:
@@ -566,12 +566,12 @@ async def home(request: Request):
             details.card > summary::after {{ content:'▸'; position:absolute; right:22px; color:var(--muted); }}
             details.card[open] > summary::after {{ transform:rotate(90deg); }}
             .card-body {{ padding:0 22px 22px; text-align:center; }}
-            .service-row {{ display:flex; flex-direction:column; justify-content:center; align-items:center; gap:6px; padding:14px 0; text-align:center; }}
+            .service-row {{ display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:10px; padding:14px 0; text-align:center; }}
             .service-row + .service-row, .metric-row + .metric-row {{ border-top:1px solid var(--line); }}
             .service-name {{ display:flex; align-items:center; gap:10px; font-weight:650; }}
             .service-dot {{ width:12px; height:12px; border-radius:3px; background:var(--good); flex:0 0 auto; }}
             .service-dot.down {{ background:var(--bad); }}
-            .metric-row {{ display:flex; flex-direction:column; justify-content:center; align-items:center; gap:5px; padding:14px 0; text-align:center; }}
+            .metric-row {{ display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:10px; padding:14px 0; text-align:center; }}
             .metric-value {{ font-weight:700; text-align:center; }}
             .good {{ color:var(--good); }} .warn {{ color:var(--warn); }} .bad {{ color:var(--bad); }}
             .muted {{ color:var(--muted); font-size:13px; line-height:1.5; }}
@@ -597,7 +597,7 @@ async def home(request: Request):
             <details class="card" data-section-key="system-status" open>
                 <summary>System Status</summary>
                 <div class="card-body">
-                    <div class="service-row"><span class="service-name"><span class="service-dot{' down' if qbit_status.startswith('Not Connected') else ''}"></span>Qbit Core</span><span class="metric-value">{escape(qbit_status)}</span></div>
+                    <div class="service-row"><span class="service-name"><span class="service-dot{' down' if qbit_status.startswith('Unavailable') else ''}"></span>Qbit Core</span><span class="metric-value">{escape(qbit_status)}</span></div>
                     <div class="service-row"><span class="service-name"><span class="service-dot{' down' if ckpool_status != 'Running' else ''}"></span>Solo Mining</span><span class="metric-value">{escape(ckpool_status)}</span></div>
                     <div class="metric-row"><span>Status</span><span class="metric-value {mining_status_class}">{mining_status}</span></div>
                     <div class="metric-row"><span>Connected Miners</span><span class="metric-value">{active_workers}</span></div>
@@ -610,14 +610,14 @@ async def home(request: Request):
                 </div>
             </details>
 
-            <details class="card" data-section-key="hall-of-blocks" open>
+            <details class="card" data-section-key="hall-of-blocks-collapsed">
                 <summary>🏆 Qbit Solo Blocks Found</summary>
                 <div class="card-body">
                 {hall_html}
                 </div>
             </details>
 
-            <details class="card" data-section-key="payout-address" open>
+            <details class="card" data-section-key="payout-address-collapsed">
                 <summary>Mining Payout Address</summary>
                 <div class="card-body">
                 <p style="color:#bbb;line-height:1.5;">Enter the external Qbit mainnet address that should receive any solo-mined block rewards. The app does not hold or manage wallet keys.</p>
