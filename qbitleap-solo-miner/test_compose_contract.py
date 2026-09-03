@@ -25,7 +25,12 @@ class ComposeContractTests(unittest.TestCase):
 
     def test_stratum_and_qbit_p2p_are_published_to_the_host(self):
         published = re.findall(r'^\s+- "([0-9]+):([0-9]+)"$', COMPOSE, re.MULTILINE)
-        self.assertEqual(published, [("8355", "8355"), ("3335", "3333")])
+        self.assertEqual(published, [("8355", "8355"), ("3335", "3335")])
+
+    def test_public_stratum_uses_worker_compatibility_router(self):
+        self.assertIn("command: [python, /app/router.py]", COMPOSE)
+        self.assertIn("CKPOOL_BACKEND_PORT: \"3333\"", COMPOSE)
+        self.assertIn("MINER_ADDRESS_FILE: /config/miner_address", COMPOSE)
 
     def test_dashboard_and_manifest_ports_match(self):
         manifest_port = re.search(r"^port: ([0-9]+)$", MANIFEST, re.MULTILINE).group(1)

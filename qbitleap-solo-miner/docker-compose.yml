@@ -8,14 +8,14 @@ services:
       PROXY_AUTH_ADD: "false"
 
   config_init:
-    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.2
+    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.3
     restart: "no"
     command: ["/usr/local/bin/init-qbit-config.sh"]
     volumes:
       - ${APP_DATA_DIR}/data/config:/config
 
   qbitd:
-    image: ghcr.io/qbitleap/qbit-solo-qbitd:0.2.2
+    image: ghcr.io/qbitleap/qbit-solo-qbitd:0.2.3
     restart: unless-stopped
     stop_grace_period: 2m
     depends_on:
@@ -56,7 +56,7 @@ services:
       start_period: 30s
 
   ckpool:
-    image: ghcr.io/qbitleap/qbit-solo-ckpool:0.2.2
+    image: ghcr.io/qbitleap/qbit-solo-ckpool:0.2.3
     restart: unless-stopped
     depends_on:
       qbitd:
@@ -96,8 +96,6 @@ services:
         done
         echo "Qbit Solo: waiting for a payout address" >&2
         exit 1
-    ports:
-      - "3335:3333"
     volumes:
       - ${APP_DATA_DIR}/data/config:/config:ro
       - ${APP_DATA_DIR}/data/ckpool/logs:/var/log/ckpool
@@ -108,8 +106,33 @@ services:
       retries: 30
       start_period: 30s
 
+  stratum_router:
+    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.3
+    restart: unless-stopped
+    command: [python, /app/router.py]
+    environment:
+      ROUTER_PORT: "3335"
+      CKPOOL_BACKEND_HOST: ckpool
+      CKPOOL_BACKEND_PORT: "3333"
+      MINER_ADDRESS_FILE: /config/miner_address
+      ROUTER_STATUS_FILE: /telemetry/router-status.json
+    ports:
+      - "3335:3335"
+    volumes:
+      - ${APP_DATA_DIR}/data/config:/config:ro
+      - ${APP_DATA_DIR}/data/telemetry:/telemetry
+    depends_on:
+      ckpool:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, "python -c \"import socket; s=socket.create_connection(('127.0.0.1',3335),2); s.close()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
   dashboard:
-    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.2
+    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.3
     restart: unless-stopped
     depends_on:
       qbitd:
@@ -129,7 +152,7 @@ services:
       - ${APP_DATA_DIR}/data/telemetry:/telemetry:ro
 
   telemetry:
-    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.2
+    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.3
     restart: unless-stopped
     depends_on:
       ckpool:
