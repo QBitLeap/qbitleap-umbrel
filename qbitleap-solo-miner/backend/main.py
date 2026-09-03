@@ -13,9 +13,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from config import (
     get_miner_address,
-    get_public_mining_endpoint,
     save_miner_address,
-    save_public_mining_endpoint,
 )
 from qbit import rpc
 
@@ -494,16 +492,12 @@ def get_ckpool_status() -> tuple[str, str, dict[str, object]]:
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     qbit_status = get_qbit_status()
-    ckpool_status, stratum_status, ckpool_stats = get_ckpool_status()
+    ckpool_status, _stratum_status, ckpool_stats = get_ckpool_status()
     miner_address = get_miner_address()
     network_difficulty = get_network_difficulty()
     best_share_value = ckpool_stats.get("best_share_value")
     numeric_best_share = (
         best_share_value if isinstance(best_share_value, (int, float)) else None
-    )
-    best_share_percent = calculate_best_share_percent(
-        numeric_best_share,
-        network_difficulty,
     )
     hall = update_hall_of_blocks(
         ckpool_stats.get("blocks_found"),
@@ -513,16 +507,6 @@ async def home(request: Request):
         ckpool_stats.get("block_history") if isinstance(ckpool_stats.get("block_history"), list) else None,
     )
     hall_html = render_hall_of_blocks(hall)
-
-    public_host, public_port = get_public_mining_endpoint()
-    endpoint_host = public_host
-    if ":" in endpoint_host and not endpoint_host.startswith("["):
-        endpoint_host = f"[{endpoint_host}]"
-    public_endpoint = (
-        f"stratum+tcp://{endpoint_host}:{public_port}"
-        if public_host
-        else ""
-    )
 
     status_message = request.query_params.get("message", "")
     error_message = request.query_params.get("error", "")
@@ -581,14 +565,14 @@ async def home(request: Request):
             details.card > summary::-webkit-details-marker {{ display:none; }}
             details.card > summary::after {{ content:'▸'; position:absolute; right:22px; color:var(--muted); }}
             details.card[open] > summary::after {{ transform:rotate(90deg); }}
-            .card-body {{ padding:0 22px 22px; }}
-            .service-row {{ display:flex; justify-content:space-between; align-items:center; gap:18px; padding:12px 0; }}
+            .card-body {{ padding:0 22px 22px; text-align:center; }}
+            .service-row {{ display:flex; flex-direction:column; justify-content:center; align-items:center; gap:6px; padding:14px 0; text-align:center; }}
             .service-row + .service-row, .metric-row + .metric-row {{ border-top:1px solid var(--line); }}
             .service-name {{ display:flex; align-items:center; gap:10px; font-weight:650; }}
             .service-dot {{ width:12px; height:12px; border-radius:3px; background:var(--good); flex:0 0 auto; }}
             .service-dot.down {{ background:var(--bad); }}
-            .metric-row {{ display:flex; justify-content:space-between; align-items:center; gap:18px; padding:12px 0; }}
-            .metric-value {{ font-weight:700; text-align:right; }}
+            .metric-row {{ display:flex; flex-direction:column; justify-content:center; align-items:center; gap:5px; padding:14px 0; text-align:center; }}
+            .metric-value {{ font-weight:700; text-align:center; }}
             .good {{ color:var(--good); }} .warn {{ color:var(--warn); }} .bad {{ color:var(--bad); }}
             .muted {{ color:var(--muted); font-size:13px; line-height:1.5; }}
             label {{ display:block; font-weight:600; margin:0 0 8px !important; }}
@@ -597,7 +581,6 @@ async def home(request: Request):
             article {{ border-color:var(--line) !important; }}
             code {{ overflow-wrap:anywhere; }}
             .footer {{ color:var(--muted); font-size:12px; text-align:center; margin:24px 0 0; }}
-            @media (max-width:560px) {{ .service-row,.metric-row {{ align-items:flex-start; }} .metric-value {{ max-width:58%; }} }}
         </style>
     </head>
     <body>
@@ -615,27 +598,15 @@ async def home(request: Request):
                 <summary>System Status</summary>
                 <div class="card-body">
                     <div class="service-row"><span class="service-name"><span class="service-dot{' down' if qbit_status.startswith('Not Connected') else ''}"></span>Qbit Core</span><span class="metric-value">{escape(qbit_status)}</span></div>
-                    <div class="service-row"><span class="service-name"><span class="service-dot{' down' if ckpool_status != 'Running' else ''}"></span>Solo Mining Backend</span><span class="metric-value">{escape(ckpool_status)}</span></div>
+                    <div class="service-row"><span class="service-name"><span class="service-dot{' down' if ckpool_status != 'Running' else ''}"></span>Solo Mining</span><span class="metric-value">{escape(ckpool_status)}</span></div>
                     <div class="metric-row"><span>Status</span><span class="metric-value {mining_status_class}">{mining_status}</span></div>
                     <div class="metric-row"><span>Connected Miners</span><span class="metric-value">{active_workers}</span></div>
                     <div class="metric-row"><span>Total Hashrate</span><span class="metric-value">{escape(str(ckpool_stats['hashrate_1m']))}</span></div>
                     <div class="metric-row"><span>Accepted Shares</span><span class="metric-value">{escape(str(ckpool_stats['accepted']))}</span></div>
                     <div class="metric-row"><span>Rejected Shares</span><span class="metric-value">{rejected_percent:.1f}%</span></div>
                     <div class="metric-row"><span>Last Share Received</span><span class="metric-value">{escape(str(ckpool_stats['last_share']))}</span></div>
-                    <div class="metric-row"><span>Stratum Port</span><span class="metric-value">3335 · {escape(stratum_status)}</span></div>
                     <div class="metric-row"><span>Blocks Found</span><span class="metric-value">{escape(str(ckpool_stats['blocks_found']))}</span></div>
                     <p class="footer">Telemetry updated: {escape(str(ckpool_stats['updated']))}</p>
-                </div>
-            </details>
-
-            <details class="card" data-section-key="mining-progress" open>
-                <summary>Mining Progress</summary>
-                <div class="card-body">
-                <div style="font-size:20px;font-weight:bold;">{escape(format_percent(best_share_percent))}</div>
-                <div style="margin-top:6px;color:#aaa;line-height:1.4;">Best share compared with current network difficulty. This is a closest-attempt record, not the probability of the next share.</div>
-                <div style="margin-top:20px;">Best share: {escape(str(ckpool_stats['best_share']))}</div>
-                <div style="margin-top:6px;">Current network difficulty: {escape(format_difficulty(network_difficulty))}</div>
-                <div style="margin-top:6px;">Blocks found: {escape(str(ckpool_stats['blocks_found']))}</div>
                 </div>
             </details>
 
@@ -643,22 +614,6 @@ async def home(request: Request):
                 <summary>🏆 Qbit Solo Blocks Found</summary>
                 <div class="card-body">
                 {hall_html}
-                </div>
-            </details>
-
-            <details class="card" data-section-key="public-endpoint" open>
-                <summary>Public Mining Endpoint</summary>
-                <div class="card-body">
-                <p style="color:#bbb;line-height:1.5;">Save the public Internet host and router-facing TCP port that NiceHash will use. This setting displays your connection string; it does not open your router or change CKPool's fixed listening port.</p>
-                <p>Current endpoint: <strong>{f'<code>{escape(public_endpoint)}</code>' if public_endpoint else 'Not configured'}</strong></p>
-                <form method="post" action="/settings/public-endpoint">
-                    <label for="public_host" style="display:block;margin-bottom:8px;">Public host or IP</label>
-                    <input id="public_host" name="public_host" type="text" value="{escape(public_host, quote=True)}" placeholder="miner.example.com or public IP" autocomplete="off" spellcheck="false" required style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #555;border-radius:4px;background:#0d0d0d;color:white;font-family:monospace;font-size:15px;">
-                    <label for="public_port" style="display:block;margin:16px 0 8px;">Public / router port</label>
-                    <input id="public_port" name="public_port" type="number" min="1" max="65535" step="1" value="{public_port}" required style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #555;border-radius:4px;background:#0d0d0d;color:white;font-family:monospace;font-size:15px;">
-                    <p style="margin:12px 0 0;color:#999;line-height:1.5;">Qbit Solo accepts miners on the Umbrel host's TCP port 3335. CKPool remains isolated on its upstream-standard container port 3333.</p>
-                    <button type="submit" style="margin-top:16px;padding:11px 18px;border:0;border-radius:4px;background:#20b957;color:white;font-size:15px;font-weight:bold;cursor:pointer;">Save public endpoint</button>
-                </form>
                 </div>
             </details>
 
@@ -740,31 +695,6 @@ async def update_miner_address(request: Request):
 
         message = quote(
             "Payout address saved. Restart the app to apply it to CKPool."
-        )
-        return RedirectResponse(
-            url=f"/?message={message}",
-            status_code=303,
-        )
-    except Exception as error:
-        error_message = quote(str(error))
-        return RedirectResponse(
-            url=f"/?error={error_message}",
-            status_code=303,
-        )
-
-
-@app.post("/settings/public-endpoint")
-async def update_public_endpoint(request: Request):
-    try:
-        body = await request.body()
-        form_data = parse_qs(body.decode("utf-8"))
-        public_host = form_data.get("public_host", [""])[0]
-        public_port = form_data.get("public_port", [""])[0]
-
-        save_public_mining_endpoint(public_host, public_port)
-
-        message = quote(
-            "Public mining endpoint saved. Forward the selected public/router TCP port to this Umbrel's fixed TCP port 3335 before connecting external hashpower."
         )
         return RedirectResponse(
             url=f"/?message={message}",

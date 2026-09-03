@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parent
 COMPOSE = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 MANIFEST = (ROOT / "umbrel-app.yml").read_text(encoding="utf-8")
 STORE = (ROOT.parent / "umbrel-app-store.yml").read_text(encoding="utf-8")
+DASHBOARD = (ROOT / "backend" / "main.py").read_text(encoding="utf-8")
 
 
 class ComposeContractTests(unittest.TestCase):
@@ -49,6 +50,13 @@ class ComposeContractTests(unittest.TestCase):
             "qbitleap-solo-miner/icon.svg",
             MANIFEST,
         )
+
+    def test_dashboard_keeps_only_operator_relevant_cards(self):
+        self.assertIn("Solo Mining</span>", DASHBOARD)
+        self.assertNotIn("Solo Mining Backend", DASHBOARD)
+        self.assertNotIn("<summary>Mining Progress</summary>", DASHBOARD)
+        self.assertNotIn("<summary>Public Mining Endpoint</summary>", DASHBOARD)
+        self.assertNotIn("<span>Stratum Port</span>", DASHBOARD)
 
 
 if __name__ == "__main__":
