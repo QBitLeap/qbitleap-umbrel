@@ -60,6 +60,10 @@ class ComposeContractTests(unittest.TestCase):
 
     def test_dashboard_status_rows_are_inline_and_secondary_cards_start_collapsed(self):
         self.assertIn("flex-wrap:wrap; justify-content:center", DASHBOARD)
+        self.assertIn('return f"Qbit Core — {progress_text}% — Block {blocks:,}"', DASHBOARD)
+        self.assertIn('"></span>Solo Mining</span></div>', DASHBOARD)
+        self.assertNotIn('<span>Status</span>', DASHBOARD)
+        self.assertNotIn('>{escape(ckpool_status)}</span>', DASHBOARD)
         self.assertNotIn('data-section-key="hall-of-blocks" open', DASHBOARD)
         self.assertNotIn('data-section-key="payout-address" open', DASHBOARD)
         self.assertNotIn('return f"Connected — block', DASHBOARD)

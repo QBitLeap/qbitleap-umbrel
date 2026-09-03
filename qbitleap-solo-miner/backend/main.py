@@ -38,10 +38,11 @@ def get_qbit_status() -> str:
         blockchain = rpc("getblockchaininfo")
         blocks = blockchain["blocks"]
         progress = blockchain["verificationprogress"] * 100
+        progress_text = f"{progress:.2f}".rstrip("0").rstrip(".")
 
-        return f"Block {blocks:,}, sync {progress:.2f}%"
+        return f"Qbit Core — {progress_text}% — Block {blocks:,}"
     except Exception as error:
-        return f"Unavailable — {type(error).__name__}"
+        return f"Qbit Core — Unavailable — {type(error).__name__}"
 
 
 def get_network_difficulty() -> float | None:
@@ -535,16 +536,6 @@ async def home(request: Request):
     rejected_count = parse_count(ckpool_stats.get("rejected")) or 0
     share_count = accepted_count + rejected_count
     rejected_percent = (rejected_count * 100 / share_count) if share_count else 0.0
-    if ckpool_status != "Running":
-        mining_status = "Needs Attention"
-        mining_status_class = "bad"
-    elif active_workers:
-        mining_status = "Mining Normally"
-        mining_status_class = "good"
-    else:
-        mining_status = "Ready — Waiting for Miner"
-        mining_status_class = "warn"
-
     return f"""
     <!doctype html>
     <html lang="en">
@@ -597,9 +588,8 @@ async def home(request: Request):
             <details class="card" data-section-key="system-status" open>
                 <summary>System Status</summary>
                 <div class="card-body">
-                    <div class="service-row"><span class="service-name"><span class="service-dot{' down' if qbit_status.startswith('Unavailable') else ''}"></span>Qbit Core</span><span class="metric-value">{escape(qbit_status)}</span></div>
-                    <div class="service-row"><span class="service-name"><span class="service-dot{' down' if ckpool_status != 'Running' else ''}"></span>Solo Mining</span><span class="metric-value">{escape(ckpool_status)}</span></div>
-                    <div class="metric-row"><span>Status</span><span class="metric-value {mining_status_class}">{mining_status}</span></div>
+                    <div class="service-row"><span class="metric-value">{escape(qbit_status)}</span></div>
+                    <div class="service-row"><span class="service-name"><span class="service-dot{' down' if ckpool_status != 'Running' else ''}"></span>Solo Mining</span></div>
                     <div class="metric-row"><span>Connected Miners</span><span class="metric-value">{active_workers}</span></div>
                     <div class="metric-row"><span>Total Hashrate</span><span class="metric-value">{escape(str(ckpool_stats['hashrate_1m']))}</span></div>
                     <div class="metric-row"><span>Accepted Shares</span><span class="metric-value">{escape(str(ckpool_stats['accepted']))}</span></div>
