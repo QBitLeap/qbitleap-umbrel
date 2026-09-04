@@ -57,6 +57,26 @@ class DashboardTelemetryTests(unittest.TestCase):
         self.assertEqual(len(hall["blocks"]), 1)
         self.assertEqual(hall["blocks"][0]["height"], 69932)
 
+    def test_enriches_migrated_block_with_coinbase_reward(self):
+        existing = {
+            "observed_blocks_found": 1,
+            "blocks": [{
+                "height": 69932,
+                "block_hash": "0000abc",
+                "reward": "Paid directly to configured Qbit address",
+            }],
+        }
+        coinbase = {"tx": [{"vout": [{"value": 25}, {"value": 0.125}]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            hall_path = Path(directory) / "hall.json"
+            hall_path.write_text(json.dumps(existing), encoding="utf-8")
+            with patch.object(main, "HALL_OF_BLOCKS_PATH", hall_path), patch.object(
+                main, "rpc", return_value=coinbase
+            ):
+                hall = main.update_hall_of_blocks(1, "qb1address", None, 100, [])
+
+        self.assertEqual(hall["blocks"][0]["reward"], "25.12500000 QBIT")
+
 
 if __name__ == "__main__":
     unittest.main()

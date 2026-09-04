@@ -223,6 +223,28 @@ def save_hall_of_blocks(data: dict[str, object]) -> None:
     temporary_path.replace(HALL_OF_BLOCKS_PATH)
 
 
+def get_block_reward(block_hash: object = None, height: object = None) -> str | None:
+    try:
+        resolved_hash = str(block_hash).strip() if block_hash else ""
+        if not resolved_hash and height not in (None, "", "Not reported"):
+            resolved_hash = str(rpc("getblockhash", [int(height)]))
+        if not resolved_hash:
+            return None
+
+        block = rpc("getblock", [resolved_hash, 2])
+        transactions = block.get("tx", []) if isinstance(block, dict) else []
+        if not transactions or not isinstance(transactions[0], dict):
+            return None
+        reward = sum(
+            float(output.get("value", 0))
+            for output in transactions[0].get("vout", [])
+            if isinstance(output, dict)
+        )
+        return f"{reward:.8f} QBIT"
+    except Exception:
+        return None
+
+
 def get_tip_block_record(
     miner_address: str,
     best_share: float | None,
@@ -252,14 +274,9 @@ def get_tip_block_record(
         if block_time:
             record["found"] = format_time(block_time)
 
-        transactions = block.get("tx", []) if isinstance(block, dict) else []
-        if transactions and isinstance(transactions[0], dict):
-            reward = sum(
-                float(output.get("value", 0))
-                for output in transactions[0].get("vout", [])
-                if isinstance(output, dict)
-            )
-            record["reward"] = f"{reward:.8f} QBIT"
+        reward = get_block_reward(block_hash=block_hash)
+        if reward:
+            record["reward"] = reward
     except (TypeError, ValueError, KeyError, RuntimeError):
         pass
 
@@ -289,7 +306,7 @@ def update_hall_of_blocks(
             "height": height,
             "found": format_time(event.get("found_at")),
             "finder": event.get("worker") or miner_address or "Not reported",
-            "reward": "Paid directly to configured Qbit address",
+            "reward": get_block_reward(event.get("block_hash"), height) or "Not reported",
             "best_share": "Block-level share",
             "network_difficulty": format_difficulty(network_difficulty),
             "difficulty_ratio": "100% — accepted block",
@@ -298,6 +315,20 @@ def update_hall_of_blocks(
             record["block_hash"] = event["block_hash"]
         blocks.append(record)
         known_heights.add(str(height))
+
+    history_enriched = False
+    for block in blocks:
+        if block.get("reward") not in {
+            None,
+            "",
+            "Not reported",
+            "Paid directly to configured Qbit address",
+        }:
+            continue
+        reward = get_block_reward(block.get("block_hash"), block.get("height"))
+        if reward:
+            block["reward"] = reward
+            history_enriched = True
 
     if reported_history:
         # A block can be observed first by the worker submission path and again
@@ -324,6 +355,13 @@ def update_hall_of_blocks(
     elif current_count is not None and current_count < observed_count:
         # Preserve permanent history across CKPool restarts or counter resets.
         hall["blocks"] = blocks
+
+    if history_enriched:
+        hall["blocks"] = blocks
+        try:
+            save_hall_of_blocks(hall)
+        except OSError:
+            pass
 
     return hall
 
@@ -360,9 +398,6 @@ def render_hall_of_blocks(hall: dict[str, object]) -> str:
                 {block_hash_html}
                 <div style="margin-top: 6px;">Finder: <code>{escape(str(block.get('finder', 'Not reported')))}</code></div>
                 <div style="margin-top: 6px;">Reward: {escape(str(block.get('reward', 'Not reported')))}</div>
-                <div style="margin-top: 6px;">Best share: {escape(str(block.get('best_share', 'Not reported')))}</div>
-                <div style="margin-top: 6px;">Network difficulty: {escape(str(block.get('network_difficulty', 'Not reported')))}</div>
-                <div style="margin-top: 6px;">Difficulty ratio: {escape(str(block.get('difficulty_ratio', 'Not reported')))}</div>
             </article>
         """)
 
@@ -589,8 +624,7 @@ async def home(request: Request):
                 <summary>System Status</summary>
                 <div class="card-body">
                     <div class="service-row"><span class="metric-value">{escape(qbit_status)}</span></div>
-                    <div class="service-row"><span class="service-name"><span class="service-dot{' down' if ckpool_status != 'Running' else ''}"></span>Solo Mining</span></div>
-                    <div class="metric-row"><span>Connected Miners</span><span class="metric-value">{active_workers}</span></div>
+                    <div class="service-row"><span class="service-name"><span class="service-dot{' down' if ckpool_status != 'Running' else ''}"></span>Solo Mining</span><span>— Connected Miners</span><span class="metric-value">{active_workers}</span></div>
                     <div class="metric-row"><span>Total Hashrate</span><span class="metric-value">{escape(str(ckpool_stats['hashrate_1m']))}</span></div>
                     <div class="metric-row"><span>Accepted Shares</span><span class="metric-value">{escape(str(ckpool_stats['accepted']))}</span></div>
                     <div class="metric-row"><span>Rejected Shares</span><span class="metric-value">{rejected_percent:.1f}%</span></div>

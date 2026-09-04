@@ -57,11 +57,14 @@ class ComposeContractTests(unittest.TestCase):
         self.assertNotIn("<summary>Mining Progress</summary>", DASHBOARD)
         self.assertNotIn("<summary>Public Mining Endpoint</summary>", DASHBOARD)
         self.assertNotIn("<span>Stratum Port</span>", DASHBOARD)
+        self.assertNotIn('>Best share: {escape', DASHBOARD)
+        self.assertNotIn('>Network difficulty: {escape', DASHBOARD)
+        self.assertNotIn('>Difficulty ratio: {escape', DASHBOARD)
 
     def test_dashboard_status_rows_are_inline_and_secondary_cards_start_collapsed(self):
         self.assertIn("flex-wrap:wrap; justify-content:center", DASHBOARD)
         self.assertIn('return f"Qbit Core — {progress_text}% — Block {blocks:,}"', DASHBOARD)
-        self.assertIn('"></span>Solo Mining</span></div>', DASHBOARD)
+        self.assertIn('Solo Mining</span><span>— Connected Miners</span>', DASHBOARD)
         self.assertNotIn('<span>Status</span>', DASHBOARD)
         self.assertNotIn('>{escape(ckpool_status)}</span>', DASHBOARD)
         self.assertNotIn('data-section-key="hall-of-blocks" open', DASHBOARD)
