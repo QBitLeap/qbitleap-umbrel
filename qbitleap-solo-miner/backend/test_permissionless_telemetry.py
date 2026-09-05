@@ -44,17 +44,17 @@ class PermissionlessTelemetryTests(unittest.TestCase):
         self.assertAlmostEqual(result["current_hashrate_hs"], 2048 * 2**32 / 60)
         self.assertEqual(next_state["workers"]["qb1address.thor-p2"]["rejected"], 1)
 
-    def test_persists_new_qbit_block_with_worker_and_height(self):
+    def test_keeps_ckpool_block_pending_until_chain_confirmation(self):
         worker = {"workername": "qb1address.rig-1", **tally(accepted=1, accepted_diff=1024, blocks=1)}
-        with patch.object(telemetry, "block_height", return_value=68099):
-            result, state = telemetry.snapshot(
-                {"runtime": 60, "lastupdate": 2000, "workers": [worker], "pool": tally(blocks=1)},
-                {},
-                now=2000,
-            )
-        block = result["block_history"]["qbit"][0]
-        self.assertEqual(block, {"found_at": 2000, "height": 68099, "worker": "rig-1"})
-        self.assertEqual(state["block_history"], [block])
+        result, state = telemetry.snapshot(
+            {"runtime": 60, "lastupdate": 2000, "workers": [worker], "pool": tally(blocks=1)},
+            {},
+            now=2000,
+        )
+        self.assertEqual(result["block_history"]["qbit"], [])
+        self.assertEqual(state["pending_blocks"], [
+            {"found_at": 2000, "height": None, "worker": "rig-1"}
+        ])
 
     def test_does_not_duplicate_an_already_recorded_block(self):
         worker = {"workername": "qb1address.rig-1", **tally(accepted=2, accepted_diff=2048, blocks=1)}
@@ -84,12 +84,11 @@ class PermissionlessTelemetryTests(unittest.TestCase):
                 "block_hash": "qbit-block-hash",
             }],
         }
-        with patch.object(telemetry, "block_height", return_value=69932):
-            result, next_state = telemetry.snapshot(
-                {"runtime": 120, "lastupdate": 2010, "workers": [worker], "pool": tally(accepted=2, accepted_diff=2048, blocks=1)},
-                state,
-                now=2010,
-            )
+        result, next_state = telemetry.snapshot(
+            {"runtime": 120, "lastupdate": 2010, "workers": [worker], "pool": tally(accepted=2, accepted_diff=2048, blocks=1)},
+            state,
+            now=2010,
+        )
 
         self.assertEqual(len(result["block_history"]["qbit"]), 1)
         self.assertEqual(result["block_history"]["qbit"][0], {
@@ -99,6 +98,56 @@ class PermissionlessTelemetryTests(unittest.TestCase):
             "block_hash": "qbit-block-hash",
         })
         self.assertEqual(next_state["block_history"], result["block_history"]["qbit"])
+
+    def test_chain_confirmation_assigns_pending_worker_to_paid_block(self):
+        state = {
+            "qbit_scan_height": 100,
+            "pending_blocks": [{"found_at": 2000, "height": None, "worker": "thor-p2"}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            address_file = Path(directory) / "qbt.txt"
+            address_file.write_text("qb1mine\n", encoding="utf-8")
+
+            def fake_rpc(method, params=None):
+                if method == "getblockcount":
+                    return 102
+                if method == "getblockhash":
+                    return f"hash-{params[0]}"
+                height = int(params[0].split("-")[1])
+                address = "qb1mine" if height == 101 else "qb1other"
+                return {"tx": [{"vout": [{"scriptPubKey": {"address": address}}]}]}
+
+            with patch.object(telemetry, "QBT_ADDRESS_FILE", address_file), patch.object(telemetry, "rpc", side_effect=fake_rpc):
+                history, height = telemetry.scan_qbit_blocks(state, [], now=3000)
+
+        self.assertEqual(height, 102)
+        self.assertEqual(history, [{
+            "found_at": 2000,
+            "height": 101,
+            "worker": "thor-p2",
+            "block_hash": "hash-101",
+        }])
+        self.assertEqual(state["pending_blocks"], [])
+
+    def test_upgrade_removes_legacy_wrong_tip_record(self):
+        state = {"qbit_scan_height": 102}
+        history = [{"found_at": 2000, "height": 102, "worker": "thor-p2"}]
+        with tempfile.TemporaryDirectory() as directory:
+            address_file = Path(directory) / "qbt.txt"
+            address_file.write_text("qb1mine\n", encoding="utf-8")
+
+            def fake_rpc(method, params=None):
+                if method == "getblockcount":
+                    return 102
+                if method == "getblockhash":
+                    return f"hash-{params[0]}"
+                return {"tx": [{"vout": [{"scriptPubKey": {"address": "qb1other"}}]}]}
+
+            with patch.object(telemetry, "QBT_ADDRESS_FILE", address_file), patch.object(telemetry, "rpc", side_effect=fake_rpc):
+                cleaned, height = telemetry.scan_qbit_blocks(state, history, now=3000)
+
+        self.assertEqual(height, 102)
+        self.assertEqual(cleaned, [])
 
     def test_reconciles_existing_duplicate_records(self):
         history = [

@@ -99,13 +99,6 @@ def rpc(method, params=None):
     return body.get("result")
 
 
-def block_height():
-    try:
-        return int(rpc("getblockcount"))
-    except Exception:
-        return None
-
-
 def coinbase_pays(block, address):
     try:
         coinbase = block["tx"][0]
@@ -125,6 +118,33 @@ def scan_qbit_blocks(state, history, now=None):
         tip = int(rpc("getblockcount"))
     except Exception:
         return history, state.get("qbit_scan_height")
+    # Older releases assigned the current chain tip to a CKPool block event.
+    # If another miner extended the chain before the telemetry poll, that made
+    # a false history entry. Revalidate those legacy, hashless rows against the
+    # configured payout address so an upgrade repairs existing state safely.
+    verified_history = []
+    for item in history:
+        if not address or not isinstance(item, dict) or item.get("height") is None or item.get("block_hash"):
+            verified_history.append(item)
+            continue
+        try:
+            block_hash = str(rpc("getblockhash", [int(item["height"])]))
+            block = rpc("getblock", [block_hash, 2])
+        except Exception:
+            verified_history.append(item)
+            continue
+        if address and coinbase_pays(block, address):
+            item = dict(item)
+            item["block_hash"] = block_hash
+            verified_history.append(item)
+    history = verified_history
+
+    pending = state.get("pending_blocks", [])
+    if not isinstance(pending, list):
+        pending = []
+    pending = [dict(item) for item in pending if isinstance(item, dict)]
+    pending.sort(key=lambda item: int(item.get("found_at", 0)))
+
     previous = state.get("qbit_scan_height")
     start = max(0, tip - 20) if previous is None else int(previous) + 1
     known_heights = {int(item["height"]): item for item in history if item.get("height") is not None}
@@ -138,9 +158,14 @@ def scan_qbit_blocks(state, history, now=None):
             if height in known_heights:
                 known_heights[height]["block_hash"] = block_hash
             else:
-                item = {"found_at": now, "height": height, "worker": "permissionless miner", "block_hash": block_hash}
+                if pending:
+                    item = pending.pop(0)
+                    item.update({"height": height, "block_hash": block_hash})
+                else:
+                    item = {"found_at": now, "height": height, "worker": "permissionless miner", "block_hash": block_hash}
                 history.insert(0, item)
                 known_heights[height] = item
+    state["pending_blocks"] = pending
     history.sort(key=lambda item: int(item.get("height") or 0), reverse=True)
     return history[:100], tip
 
@@ -198,13 +223,26 @@ def snapshot(status, state, now=None):
             "hashrate_hs": hashrate,
         })
 
-    if new_blocks:
-        height = block_height()
-        for item in new_blocks:
-            item["height"] = height
-
     history = state.get("block_history", []) if isinstance(state.get("block_history"), list) else []
-    history = reconcile_block_history(new_blocks + history)
+    history = reconcile_block_history(history)
+    pending_blocks = state.get("pending_blocks", []) if isinstance(state.get("pending_blocks"), list) else []
+    pending_blocks = [item for item in pending_blocks if isinstance(item, dict)]
+    for event in new_blocks:
+        confirmed = [
+            item for item in history
+            if item.get("block_hash")
+            and item.get("worker") == "permissionless miner"
+            and abs(int(item.get("found_at", 0)) - int(event["found_at"])) <= 300
+        ]
+        if confirmed:
+            match = min(
+                confirmed,
+                key=lambda item: abs(int(item.get("found_at", 0)) - int(event["found_at"])),
+            )
+            match["worker"] = event["worker"]
+            match["found_at"] = event["found_at"]
+        else:
+            pending_blocks.append(event)
     pool = status.get("pool", {}) if isinstance(status.get("pool"), dict) else {}
     accepted_total = int(bucket(pool, "accepted"))
     rejected_total = int(sum(bucket(pool, reason) for reason in REJECT_REASONS))
@@ -223,6 +261,7 @@ def snapshot(status, state, now=None):
         "lastupdate": lastupdate,
         "workers": worker_state,
         "block_history": history,
+        "pending_blocks": pending_blocks,
         "qbit_scan_height": state.get("qbit_scan_height"),
     }
     return telemetry, next_state

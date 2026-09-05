@@ -77,6 +77,29 @@ class DashboardTelemetryTests(unittest.TestCase):
 
         self.assertEqual(hall["blocks"][0]["reward"], "25.12500000 QBIT")
 
+    def test_hall_removes_legacy_hashless_false_block(self):
+        events = [{
+            "height": 74055,
+            "block_hash": "0000abc",
+            "worker": "thor-p2",
+            "found_at": 1000,
+        }]
+        legacy_hall = {
+            "observed_blocks_found": 2,
+            "blocks": [
+                {"height": 74055, "block_hash": "0000abc", "finder": "permissionless miner"},
+                {"height": 74056, "finder": "thor-p2"},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            hall_path = Path(directory) / "hall.json"
+            hall_path.write_text(json.dumps(legacy_hall), encoding="utf-8")
+            with patch.object(main, "HALL_OF_BLOCKS_PATH", hall_path):
+                hall = main.update_hall_of_blocks(1, "qb1address", None, 100, events)
+
+        self.assertEqual([block["height"] for block in hall["blocks"]], [74055])
+        self.assertEqual(hall["observed_blocks_found"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

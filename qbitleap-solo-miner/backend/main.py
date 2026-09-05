@@ -297,6 +297,15 @@ def update_hall_of_blocks(
     if not isinstance(blocks, list):
         blocks = []
 
+    # Telemetry history is now admitted only after the chain scanner verifies
+    # that the coinbase pays this app's configured address. Remove hashless
+    # rows produced by the older current-tip race once verified history is
+    # available; confirmed rows always carry their block hash.
+    original_block_count = len(blocks)
+    if reported_history and any(event.get("block_hash") for event in reported_history):
+        blocks = [block for block in blocks if block.get("block_hash")]
+    removed_legacy_rows = len(blocks) != original_block_count
+
     known_heights = {str(block.get("height")) for block in blocks if block.get("height") is not None}
     for event in reversed(reported_history or []):
         height = event.get("height")
@@ -353,8 +362,15 @@ def update_hall_of_blocks(
         except OSError:
             pass
     elif current_count is not None and current_count < observed_count:
-        # Preserve permanent history across CKPool restarts or counter resets.
-        hall["blocks"] = blocks
+        if removed_legacy_rows:
+            hall = {"observed_blocks_found": current_count, "blocks": blocks}
+            try:
+                save_hall_of_blocks(hall)
+            except OSError:
+                pass
+        else:
+            # Preserve permanent history across CKPool restarts or counter resets.
+            hall["blocks"] = blocks
 
     if history_enriched:
         hall["blocks"] = blocks

@@ -8,14 +8,14 @@ services:
       PROXY_AUTH_ADD: "false"
 
   config_init:
-    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.7
+    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.8
     restart: "no"
     command: ["/usr/local/bin/init-qbit-config.sh"]
     volumes:
       - ${APP_DATA_DIR}/data/config:/config
 
   qbitd:
-    image: ghcr.io/qbitleap/qbit-solo-qbitd:0.2.7
+    image: ghcr.io/qbitleap/qbit-solo-qbitd:0.2.8
     restart: unless-stopped
     stop_grace_period: 2m
     depends_on:
@@ -56,7 +56,7 @@ services:
       start_period: 30s
 
   ckpool:
-    image: ghcr.io/qbitleap/qbit-solo-ckpool:0.2.7
+    image: ghcr.io/qbitleap/qbit-solo-ckpool:0.2.8
     restart: unless-stopped
     depends_on:
       qbitd:
@@ -107,7 +107,7 @@ services:
       start_period: 30s
 
   stratum_router:
-    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.7
+    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.8
     restart: unless-stopped
     command: [python, /app/router.py]
     environment:
@@ -132,7 +132,7 @@ services:
       start_period: 30s
 
   dashboard:
-    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.7
+    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.8
     restart: unless-stopped
     depends_on:
       qbitd:
@@ -152,7 +152,7 @@ services:
       - ${APP_DATA_DIR}/data/telemetry:/telemetry:ro
 
   telemetry:
-    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.7
+    image: ghcr.io/qbitleap/qbit-solo-dashboard:0.2.8
     restart: unless-stopped
     depends_on:
       ckpool:
