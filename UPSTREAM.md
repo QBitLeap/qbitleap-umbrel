@@ -4,9 +4,9 @@ The vendored mining stack in
 `qbitleap-solo-miner/upstream/qbit-mining-bootstrap/` is an unmodified copy of:
 
 - Repository: `https://github.com/Qbit-Org/qbit-mining-bootstrap.git`
-- Commit: `f28a6bf46afd73de42842e7ca6732b27ac58c25d`
+- Commit: `3e233d22abc6f0466473d9c816449c4d8432685c`
 - Upstream branch at import: `main`
-- Upstream-reported version: `1.1.0`
+- Upstream-reported version: `2.0.0`
 
 Umbrel-specific code must remain outside the vendored directory. The upstream
 integrity workflow compares every tracked path, blob, and executable bit against
